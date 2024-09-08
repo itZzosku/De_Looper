@@ -4,15 +4,11 @@ import json
 import signal
 import threading
 
-# Load Twitch configuration from config.json (make sure this file is ignored by git)
+# Twitch configuration
 config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 with open(config_file, 'r', encoding='utf-8') as f:
     config_data = json.load(f)
     Twitch_Stream_Key = config_data.get("Twitch_Stream_Key")
-
-if not os.path.exists(config_file):
-    raise FileNotFoundError("Configuration file 'config.json' is missing. Please create it and add your Twitch Stream Key.")
-
 
 Twitch_URL = f"rtmp://live.twitch.tv/app/{Twitch_Stream_Key}"
 
@@ -50,7 +46,7 @@ def load_progress():
     return None
 
 
-# Function to handle the skip command
+# Function to handle the skip command in a separate thread
 def handle_skip_command():
     global skip_next, skip_to_id
     while True:
@@ -128,8 +124,6 @@ def normalize_and_stream(media_files, last_played_id=None):
                 media = next((m for m in media_files if m['id'] == skip_to_id), None)
                 if media:
                     idx = media_files.index(media)  # Set the index to the found media
-                    save_progress(media['id'])  # Save progress after jumping to the ID
-                    print(f"Progress saved. Last played video id: {media['id']}.")
                     skip_to_id = None  # Reset the skip_to_id flag
                 else:
                     print(f"Video with ID: {skip_to_id} not found.")
@@ -147,11 +141,10 @@ def normalize_and_stream(media_files, last_played_id=None):
                 "-loglevel", "error",  # Only show errors
                 "-i", media_file,  # Input video file
                 "-s", "1280x720",  # Scale video to 720p
-                "-c:v", "libx264",  # Use H.264 codec (or hardware encoder like h264_nvenc)
-                "-preset", "veryfast",  # Use a faster preset for lower CPU usage
+                "-c:v", "libx264",  # Video codec H.264
                 "-b:v", "2300k",  # Reduce video bitrate
-                "-g", "60",  # Reduce keyframe interval to reduce CPU load
-                "-r", "30",  # Lower frame rate
+                "-g", "60",  # Keyframe interval
+                "-r", "30",  # Frame rate
                 "-c:a", "aac",  # Audio codec AAC
                 "-ar", "44100",  # Audio sample rate
                 "-f", "mpegts",  # Output format (MPEG-TS)
@@ -174,7 +167,7 @@ def normalize_and_stream(media_files, last_played_id=None):
                 stream_proc.stdin.write(data)
             normalize_proc.wait()
 
-            # Save progress after each clip is streamed (using the id now)
+            # Save progress after each clip is streamed
             save_progress(media_id)
             print(f"Progress saved. Last played video id: {media_id}.")
             idx += 1
