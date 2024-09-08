@@ -148,10 +148,10 @@ def normalize_and_stream(media_files, last_played_id=None):
                 "-i", media_file,  # Input video file
                 "-s", "1280x720",  # Scale video to 720p
                 "-c:v", "libx264",  # Use H.264 codec (or hardware encoder like h264_nvenc)
-                "-preset", "superfast",  # Use a faster preset for lower CPU usage
-                "-b:v", "2000k",  # Reduce video bitrate
-                "-g", "120",  # Reduce keyframe interval to reduce CPU load
-                "-r", "25",  # Lower frame rate
+                "-preset", "veryfast",  # Use a faster preset for lower CPU usage
+                "-b:v", "2300k",  # Reduce video bitrate
+                "-g", "60",  # Reduce keyframe interval to reduce CPU load
+                "-r", "30",  # Lower frame rate
                 "-c:a", "aac",  # Audio codec AAC
                 "-ar", "44100",  # Audio sample rate
                 "-f", "mpegts",  # Output format (MPEG-TS)
