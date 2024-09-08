@@ -4,11 +4,19 @@ import json
 import signal
 import threading
 
-# Twitch configuration
-Twitch_Stream_Key = "live_1138107151_TllNxIhHwf0DI62aRS60XCA94YWrEN"
+# Load Twitch configuration from config.json (make sure this file is ignored by git)
+config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+with open(config_file, 'r', encoding='utf-8') as f:
+    config_data = json.load(f)
+    Twitch_Stream_Key = config_data.get("Twitch_Stream_Key")
+
+if not os.path.exists(config_file):
+    raise FileNotFoundError("Configuration file 'config.json' is missing. Please create it and add your Twitch Stream Key.")
+
+
 Twitch_URL = f"rtmp://live.twitch.tv/app/{Twitch_Stream_Key}"
 
-# Define the path to playlist_test.json and progress.json (in the same folder as main.py)
+# Define the path to playlist.json and progress.json (in the same folder as main.py)
 script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory where the script is located
 playlist_json = os.path.join(script_dir, "playlist.json")
 progress_json = os.path.join(script_dir, "progress.json")
