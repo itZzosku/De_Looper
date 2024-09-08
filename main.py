@@ -3,6 +3,7 @@ import os
 import json
 import signal
 import threading
+import sys  # Import sys to handle command-line arguments
 
 # Twitch configuration
 config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -179,6 +180,17 @@ def normalize_and_stream(media_files, last_played_id=None):
 
 # Main function to run the whole process
 def main():
+    # Check if a command-line argument (video ID) is passed
+    if len(sys.argv) > 1:
+        try:
+            start_id = int(sys.argv[1])
+            print(f"Starting from video ID: {start_id}")
+        except ValueError:
+            print("Invalid ID provided. Starting from the last saved position.")
+            start_id = None
+    else:
+        start_id = None
+
     # Start a thread to listen for the "skip" and "skiptoid" commands
     skip_thread = threading.Thread(target=handle_skip_command, daemon=True)
     skip_thread.start()
@@ -191,8 +203,9 @@ def main():
         print("No media files found in playlist!")
         return
 
-    # Load the last played id from progress.json
-    last_played_id = load_progress()
+    # Determine starting video: from command-line argument or last saved position
+    last_played_id = start_id if start_id else load_progress()
+
     if last_played_id:
         print(f"Resuming from video id: {last_played_id}")
     else:
