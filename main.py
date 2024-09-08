@@ -1,19 +1,23 @@
 import subprocess
 import os
 import json
+import signal
+import threading
 
 # Twitch configuration
 Twitch_Stream_Key = "live_1138107151_TllNxIhHwf0DI62aRS60XCA94YWrEN"
 Twitch_URL = f"rtmp://live.twitch.tv/app/{Twitch_Stream_Key}"
 
-# Define the path to playlist.json and progress.json (in the same folder as main.py)
+# Define the path to playlist_test.json and progress.json (in the same folder as main.py)
 script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory where the script is located
 playlist_json = os.path.join(script_dir, "playlist.json")
 progress_json = os.path.join(script_dir, "progress.json")
 
-# Track running subprocesses for graceful shutdown
+# Global variables to handle skip functionality
 stream_proc = None
 normalize_proc = None
+skip_next = False
+skip_to_id = None
 
 
 # Function to read playlist from the JSON file with UTF-8 encoding (for special characters)
@@ -38,6 +42,25 @@ def load_progress():
     return None
 
 
+# Function to handle the skip command
+def handle_skip_command():
+    global skip_next, skip_to_id
+    while True:
+        command = input()  # Listen for command input
+        command_parts = command.strip().split()
+
+        if command_parts[0].lower() == 'skip':
+            skip_next = True  # Set the skip flag to True
+            print("Skipping to the next video...")
+
+        elif command_parts[0].lower() == 'skiptoid' and len(command_parts) > 1:
+            try:
+                skip_to_id = int(command_parts[1])  # Set the skip_to_id to the entered ID
+                print(f"Skipping to video with ID: {skip_to_id}")
+            except ValueError:
+                print("Invalid ID entered. Please enter a valid numeric ID.")
+
+
 # Graceful shutdown function
 def graceful_shutdown(signum, frame):
     global stream_proc, normalize_proc
@@ -50,15 +73,13 @@ def graceful_shutdown(signum, frame):
 
 
 # Register the shutdown handler
-import signal
-
 signal.signal(signal.SIGINT, graceful_shutdown)
 signal.signal(signal.SIGTERM, graceful_shutdown)
 
 
 # Function to normalize and pipe the video to the streaming FFmpeg instance
 def normalize_and_stream(media_files, last_played_id=None):
-    global stream_proc, normalize_proc
+    global stream_proc, normalize_proc, skip_next, skip_to_id
 
     # FFmpeg command to stream to Twitch (this instance is always running)
     stream_command = [
@@ -86,51 +107,79 @@ def normalize_and_stream(media_files, last_played_id=None):
                 break
 
     # Iterate through media files and normalize/pipe each clip starting from the last played id
-    for idx, media in enumerate(media_files[start_index:], start=start_index):
-        media_file = media.get('file_path')
-        media_id = media.get('id')
+    while True:  # Infinite loop to restart the playlist from the beginning
+        idx = start_index
+        while idx < len(media_files):
+            media = media_files[idx]
+            media_file = media.get('file_path')
+            media_id = media.get('id')
 
-        if not os.path.exists(media_file):
-            print(f"File {media_file} does not exist!")
-            continue
+            # Check if skip_to_id was set and jump to the requested id
+            if skip_to_id is not None:
+                # Look for the media with the matching id
+                media = next((m for m in media_files if m['id'] == skip_to_id), None)
+                if media:
+                    idx = media_files.index(media)  # Set the index to the found media
+                    save_progress(media['id'])  # Save progress after jumping to the ID
+                    print(f"Progress saved. Last played video id: {media['id']}.")
+                    skip_to_id = None  # Reset the skip_to_id flag
+                else:
+                    print(f"Video with ID: {skip_to_id} not found.")
+                    skip_to_id = None
+                continue
 
-        # FFmpeg command to normalize the video and pipe it to stdout
-        normalize_command = [
-            "ffmpeg",
-            "-loglevel", "error",  # Only show errors
-            "-i", media_file,  # Input video file
-            "-s", "1280x720",  # Scale video to 720p
-            "-c:v", "mpeg2video",  # Video codec
-            "-b:v", "50M",  # Video bitrate
-            "-c:a", "s302m",  # Audio codec
-            "-strict", "-2",  # Enable non-standard codecs
-            "-ar", "48k",  # Audio sample rate
-            "-f", "mpegts",  # Output format (MPEG-TS)
-            "-"  # Pipe output to stdout
-        ]
+            if not os.path.exists(media_file):
+                print(f"File {media_file} does not exist!")
+                idx += 1
+                continue
 
-        print(f"Normalizing and streaming: {media_file}")
+            # FFmpeg command to normalize the video and pipe it to stdout (H.264 and AAC)
+            normalize_command = [
+                "ffmpeg",
+                "-loglevel", "error",  # Only show errors
+                "-i", media_file,  # Input video file
+                "-s", "1280x720",  # Scale video to 720p
+                "-c:v", "libx264",  # Video codec H.264
+                "-b:v", "2500k",  # Video bitrate
+                "-g", "60",  # Force a keyframe every 60 frames (2 seconds at 30fps)
+                "-c:a", "aac",  # Audio codec AAC
+                "-ar", "44100",  # Audio sample rate
+                "-f", "mpegts",  # Output format (MPEG-TS)
+                "-"  # Pipe output to stdout
+            ]
 
-        # Start the normalization process and pipe its output to the streaming process
-        normalize_proc = subprocess.Popen(normalize_command, stdout=subprocess.PIPE)
-        while True:
-            data = normalize_proc.stdout.read(65536)
-            if not data:
-                break
-            stream_proc.stdin.write(data)
-        normalize_proc.wait()
+            print(f"Normalizing and streaming: {media_file}")
 
-        # Save progress after each clip is streamed (using the id now)
-        save_progress(media_id)
-        print(f"Progress saved. Last played video id: {media_id}.")
+            # Start the normalization process and pipe its output to the streaming process
+            normalize_proc = subprocess.Popen(normalize_command, stdout=subprocess.PIPE)
 
-    # Close the stream after all videos are processed
-    stream_proc.stdin.close()
-    stream_proc.wait()
+            while True:
+                data = normalize_proc.stdout.read(65536)
+                if not data or skip_next or skip_to_id is not None:  # If no data or skip is triggered, break the loop
+                    if skip_next or skip_to_id is not None:
+                        normalize_proc.terminate()  # Stop the current normalization process
+                        stream_proc.stdin.flush()  # Flush remaining data before starting next clip
+                        skip_next = False  # Reset skip flag for the next video
+                    break
+                stream_proc.stdin.write(data)
+            normalize_proc.wait()
+
+            # Save progress after each clip is streamed (using the id now)
+            save_progress(media_id)
+            print(f"Progress saved. Last played video id: {media_id}.")
+            idx += 1
+
+        # If the playlist ends, start from the beginning again
+        print("Reached the end of the playlist. Restarting from the beginning.")
+        start_index = 0
 
 
 # Main function to run the whole process
 def main():
+    # Start a thread to listen for the "skip" and "skiptoid" commands
+    skip_thread = threading.Thread(target=handle_skip_command, daemon=True)
+    skip_thread.start()
+
     # Get media files from the playlist JSON
     print(f"Using playlist: {playlist_json}")
     media_files = get_media_files_from_playlist(playlist_json)
