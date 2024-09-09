@@ -3,7 +3,6 @@ import os
 import json
 import signal
 import sys  # To handle command-line arguments
-import time  # For introducing small delays to improve transitions
 
 # Global variables for processes
 stream_proc = None
