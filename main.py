@@ -84,6 +84,9 @@ def get_media_files_from_playlist(json_file):
 def save_progress(last_id):
     with open(progress_json, 'w', encoding='utf-8') as f:
         json.dump({"last_played_id": last_id}, f)
+        f.flush()  # Ensure buffered data is written to disk
+        os.fsync(f.fileno())  # Sync the file with the disk to ensure it's written
+    print(f"Progress saved. Last played video id: {last_id}.")
 
 
 # Function to load the last played id from progress.json
@@ -168,7 +171,6 @@ def pipe_to_stream(media_file, is_preprocessed):
 
 
 # Function to start streaming the videos
-# Function to start streaming the videos
 def normalize_and_stream(media_files, last_played_id=None):
     global stream_proc
 
@@ -192,9 +194,6 @@ def normalize_and_stream(media_files, last_played_id=None):
             media_file = media.get('file_path')
             media_id = media.get('id')
 
-            # Play a black screen transition between clips
-            play_transition()
-
             # Check if the file has "_processed.mp4" in the name (indicating it is already processed)
             if "_processed.mp4" in media_file and os.path.exists(media_file):
                 # Pipe preprocessed file to the streaming FFmpeg instance (no re-encoding)
@@ -203,9 +202,13 @@ def normalize_and_stream(media_files, last_played_id=None):
                 # Normalize and pipe the non-preprocessed file
                 pipe_to_stream(media_file, is_preprocessed=False)
 
-            # Save progress after each clip is streamed
+            # Save progress after each clip is streamed BEFORE playing the transition
             save_progress(media_id)
-            print(f"Progress saved. Last played video id: {media_id}.")
+
+            # Play a black screen transition between clips
+            play_transition()
+
+            # Move to the next clip
             idx += 1
 
         # If the playlist ends, start from the beginning again
