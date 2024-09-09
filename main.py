@@ -89,13 +89,15 @@ def save_progress(last_id):
     print(f"Progress saved. Last played video id: {last_id}.")
 
 
-# Function to load the last played id from progress.json
+# Function to load the last played id from progress.json and return the next video (last_played_id + 1)
 def load_progress():
     if os.path.exists(progress_json):
         with open(progress_json, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        return data.get("last_played_id", None)  # Return None if no id found
-    return None
+        last_played_id = data.get("last_played_id", None)  # Get last played id
+        if last_played_id is not None:
+            return last_played_id + 1  # Start from the next video (last_played_id + 1)
+    return None  # If no progress is found, start from the first video
 
 
 # Graceful shutdown function
