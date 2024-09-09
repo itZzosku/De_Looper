@@ -3,16 +3,20 @@ import os
 import json
 import signal
 import sys  # To handle command-line arguments
+import irc.client  # For sending messages to Twitch chat
 
 # Global variables for processes
 stream_proc = None
 normalize_proc = None  # Ensure both are initialized at the module level
 
-# Twitch configuration
+# Twitch configuration for streaming and chat
 config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 with open(config_file, 'r', encoding='utf-8') as f:
     config_data = json.load(f)
     Twitch_Stream_Key = config_data.get("Twitch_Stream_Key")
+    Twitch_OAuth_Token = config_data.get("Twitch_OAuth_Token")  # Add your OAuth token here
+    Twitch_Nick = config_data.get("Twitch_Nick")  # Add your Twitch username here
+    Twitch_Channel = config_data.get("Twitch_Channel")  # Add your Twitch channel name here
 
 Twitch_URL = f"rtmp://live.twitch.tv/app/{Twitch_Stream_Key}"
 
@@ -37,6 +41,24 @@ stream_command = [
     "-f", "flv",  # Output format for Twitch
     Twitch_URL  # Streaming URL for Twitch
 ]
+
+
+# Function to send a message to Twitch chat using the broadcasting account
+def send_message_to_chat(message):
+    client = irc.client.Reactor()
+    try:
+        c = client.server().connect("irc.chat.twitch.tv", 6667, Twitch_Nick, Twitch_OAuth_Token)
+    except irc.client.ServerConnectionError as e:
+        print(f"Error connecting to Twitch chat: {e}")
+        return
+
+    def on_connect(connection, event):
+        connection.join(f"#{Twitch_Channel}")
+        connection.privmsg(f"#{Twitch_Channel}", message)
+        print(f"Sent message to Twitch chat: {message}")
+
+    c.add_global_handler("welcome", on_connect)
+    client.process_once(0.5)  # Process the connection
 
 
 # Function to play a 3-second black screen transition
@@ -171,15 +193,13 @@ def pipe_to_stream(media_file, is_preprocessed):
     normalize_proc.wait()
 
 
-# Function to start streaming the videos
+# Function to start streaming the videos and post to chat
 def normalize_and_stream(media_files, last_played_id=None):
     global stream_proc
 
-    # Start the stream subprocess and keep it running
     print("Starting streaming process...")
     stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
 
-    # Find the position of the last played video by id
     start_index = 0
     if last_played_id is not None:
         for i, media in enumerate(media_files):
@@ -187,39 +207,34 @@ def normalize_and_stream(media_files, last_played_id=None):
                 start_index = i  # Start from the requested video
                 break
 
-    # Iterate through media files and normalize/pipe each clip starting from the last played id
-    while True:  # Infinite loop to restart the playlist from the beginning
+    while True:
         idx = start_index
         while idx < len(media_files):
             media = media_files[idx]
             media_file = media.get('file_path')
             media_id = media.get('id')
+            media_title = media.get('title', 'Untitled')  # Get the title from the playlist
+            media_release_date = media.get('release_date', 'Unknown')  # Get the release date
 
-            # Check if the file has "_processed.mp4" in the name (indicating it is already processed)
+            # Send a message to Twitch chat with the video title and release date
+            message = f"Nyt toistetaan: {media_title} (Julkaisu päivä: {media_release_date})"
+            send_message_to_chat(message)
+
             if "_processed.mp4" in media_file and os.path.exists(media_file):
-                # Pipe preprocessed file to the streaming FFmpeg instance (no re-encoding)
                 pipe_to_stream(media_file, is_preprocessed=True)
             else:
-                # Normalize and pipe the non-preprocessed file
                 pipe_to_stream(media_file, is_preprocessed=False)
 
-            # Save progress after each clip is streamed BEFORE playing the transition
             save_progress(media_id)
-
-            # Play a black screen transition between clips
             play_transition()
-
-            # Move to the next clip
             idx += 1
 
-        # If the playlist ends, start from the beginning again
         print("Reached the end of the playlist. Restarting from the beginning.")
         start_index = 0
 
 
 # Main function to run the whole process
 def main():
-    # Check if a command-line argument (video ID) is passed
     if len(sys.argv) > 1:
         try:
             start_id = int(sys.argv[1])
@@ -230,7 +245,6 @@ def main():
     else:
         start_id = None
 
-    # Get media files from the playlist JSON
     print(f"Using playlist: {playlist_json}")
     media_files = get_media_files_from_playlist(playlist_json)
 
@@ -238,7 +252,6 @@ def main():
         print("No media files found in playlist!")
         return
 
-    # Determine starting video: from command-line argument or last saved position
     last_played_id = start_id if start_id else load_progress()
 
     if last_played_id:
@@ -246,7 +259,6 @@ def main():
     else:
         print("Starting from the first video.")
 
-    # Normalize and stream the clips starting from the last played id
     normalize_and_stream(media_files, last_played_id=last_played_id)
 
 
