@@ -39,31 +39,35 @@ stream_command = [
     Twitch_URL  # Streaming URL for Twitch
 ]
 
+
 # Function to play a 3-second black screen transition
 def play_transition():
-    # Play a 3-second black screen transition
-    print("Playing 3-second black screen transition between clips...")
+    # Play a 3-second black screen transition with silent audio
+    print("Playing 3-second black screen transition with silent audio between clips...")
 
-    # FFmpeg command to generate a black screen (3 seconds, 1280x720 resolution)
+    # FFmpeg command to generate a black screen (3 seconds, 1280x720 resolution) with silent audio
     ffmpeg_command = [
         "ffmpeg",
-        "-f", "lavfi",  # Use lavfi to generate input
-        "-loglevel", "error",  # Only show errors
+        "-f", "lavfi",  # Use lavfi to generate video and audio
         "-i", "color=c=black:s=1280x720:r=30:d=3",  # Black screen, 1280x720 resolution, 3 seconds long
+        "-f", "lavfi",  # Generate silent audio
+        "-i", "anullsrc=r=44100:cl=stereo",  # Generate silent audio at 44.1kHz, stereo
         "-c:v", "libx264",  # Encode video to H.264
-        "-t", "3",  # Duration of the black screen (3 seconds)
+        "-c:a", "aac",  # Encode audio to AAC
+        "-ar", "44100",  # Audio sample rate
+        "-t", "3",  # Duration of the transition (3 seconds)
         "-f", "mpegts",  # Output format for Twitch
         "-"  # Pipe output to stdout
     ]
 
-    # Play the black screen and pipe it into the stream
+    # Play the black screen with silent audio and pipe it into the stream
     transition_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
 
     while True:
         data = transition_proc.stdout.read(65536)
         if not data:  # Break when done playing the transition
             break
-        stream_proc.stdin.write(data)  # Pipe black screen data to the stream
+        stream_proc.stdin.write(data)  # Pipe black screen and silent audio data to the stream
 
     transition_proc.wait()
 
@@ -162,6 +166,7 @@ def pipe_to_stream(media_file, is_preprocessed):
     normalize_proc.wait()
 
 
+# Function to start streaming the videos
 # Function to start streaming the videos
 def normalize_and_stream(media_files, last_played_id=None):
     global stream_proc
