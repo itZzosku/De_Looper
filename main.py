@@ -4,6 +4,10 @@ import json
 import signal
 import sys  # To handle command-line arguments
 
+# Global variables for processes
+stream_proc = None
+normalize_proc = None  # Ensure both are initialized at the module level
+
 # Twitch configuration
 config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 with open(config_file, 'r', encoding='utf-8') as f:
@@ -16,7 +20,6 @@ Twitch_URL = f"rtmp://live.twitch.tv/app/{Twitch_Stream_Key}"
 script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory where the script is located
 playlist_json = os.path.join(script_dir, "playlist.json")
 progress_json = os.path.join(script_dir, "progress.json")
-
 
 # Global variable to hold the stream command
 stream_command = [
@@ -62,9 +65,13 @@ def load_progress():
 def graceful_shutdown(signum, frame):
     global stream_proc, normalize_proc
     print("Shutting down...")
-    if normalize_proc:
+
+    # Check and terminate the normalization process, if it exists
+    if normalize_proc and normalize_proc.poll() is None:  # Check if the process is running
         normalize_proc.terminate()  # Stop the first FFmpeg process
-    if stream_proc:
+
+    # Check and terminate the stream process, if it exists
+    if stream_proc and stream_proc.poll() is None:  # Check if the process is running
         stream_proc.stdin.close()  # Close the pipe to stop the streaming process
         stream_proc.terminate()  # Terminate the streaming FFmpeg process
 
