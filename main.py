@@ -118,6 +118,7 @@ def normalize_and_stream(media_files, last_played_id=None):
             media = media_files[idx]
             media_file = media.get('file_path')
             media_id = media.get('id')
+            processed_file = media_file.replace('.mp4', '_processed.mp4')
 
             # Check if skip_to_id was set and jump to the requested id
             if skip_to_id is not None:
@@ -131,42 +132,44 @@ def normalize_and_stream(media_files, last_played_id=None):
                     skip_to_id = None
                 continue
 
-            if not os.path.exists(media_file):
-                print(f"File {media_file} does not exist!")
-                idx += 1
-                continue
+            # Stream preprocessed file if available
+            if os.path.exists(processed_file):
+                print(f"Streaming preprocessed file: {processed_file}")
+                with open(processed_file, 'rb') as f:
+                    while chunk := f.read(65536):
+                        stream_proc.stdin.write(chunk)
+            else:
+                # FFmpeg command to normalize the video and pipe it to stdout (H.264 and AAC)
+                normalize_command = [
+                    "ffmpeg",
+                    "-loglevel", "error",  # Only show errors
+                    "-i", media_file,  # Input video file
+                    "-s", "1280x720",  # Scale video to 720p
+                    "-c:v", "libx264",  # Video codec H.264
+                    "-b:v", "2300k",  # Reduce video bitrate
+                    "-g", "60",  # Keyframe interval
+                    "-r", "30",  # Frame rate
+                    "-c:a", "aac",  # Audio codec AAC
+                    "-ar", "44100",  # Audio sample rate
+                    "-f", "mpegts",  # Output format (MPEG-TS)
+                    "-"  # Pipe output to stdout
+                ]
 
-            # FFmpeg command to normalize the video and pipe it to stdout (H.264 and AAC)
-            normalize_command = [
-                "ffmpeg",
-                "-loglevel", "error",  # Only show errors
-                "-i", media_file,  # Input video file
-                "-s", "1280x720",  # Scale video to 720p
-                "-c:v", "libx264",  # Video codec H.264
-                "-b:v", "2300k",  # Reduce video bitrate
-                "-g", "60",  # Keyframe interval
-                "-r", "30",  # Frame rate
-                "-c:a", "aac",  # Audio codec AAC
-                "-ar", "44100",  # Audio sample rate
-                "-f", "mpegts",  # Output format (MPEG-TS)
-                "-"  # Pipe output to stdout
-            ]
+                print(f"Normalizing and streaming: {media_file}")
 
-            print(f"Normalizing and streaming: {media_file}")
+                # Start the normalization process and pipe its output to the streaming process
+                normalize_proc = subprocess.Popen(normalize_command, stdout=subprocess.PIPE)
 
-            # Start the normalization process and pipe its output to the streaming process
-            normalize_proc = subprocess.Popen(normalize_command, stdout=subprocess.PIPE)
-
-            while True:
-                data = normalize_proc.stdout.read(65536)
-                if not data or skip_next or skip_to_id is not None:  # If no data or skip is triggered, break the loop
-                    if skip_next or skip_to_id is not None:
-                        normalize_proc.terminate()  # Stop the current normalization process
-                        stream_proc.stdin.flush()  # Flush remaining data before starting next clip
-                        skip_next = False  # Reset skip flag for the next video
-                    break
-                stream_proc.stdin.write(data)
-            normalize_proc.wait()
+                while True:
+                    data = normalize_proc.stdout.read(65536)
+                    if not data or skip_next or skip_to_id is not None:  # If no data or skip is triggered, break the loop
+                        if skip_next or skip_to_id is not None:
+                            normalize_proc.terminate()  # Stop the current normalization process
+                            stream_proc.stdin.flush()  # Flush remaining data before starting next clip
+                            skip_next = False  # Reset skip flag for the next video
+                        break
+                    stream_proc.stdin.write(data)
+                normalize_proc.wait()
 
             # Save progress after each clip is streamed
             save_progress(media_id)
