@@ -27,6 +27,10 @@ stream_command = [
     "-c:v", "libx264",  # Encode video to H.264
     "-c:a", "aac",  # Encode audio to AAC
     "-ar", "44100",  # Audio sample rate
+    "-b:v", "2300k",  # Set video bitrate to 2300k to match normalization
+    "-bufsize", "4600k",  # Buffer size (2x the video bitrate to handle spikes)
+    "-maxrate", "2300k",  # Max bitrate set to 2300k to align with clip encoding
+    "-g", "60",  # Keyframe interval (for 30fps, keyframe every 2 seconds)
     "-f", "flv",  # Output format for Twitch
     Twitch_URL  # Streaming URL for Twitch
 ]
