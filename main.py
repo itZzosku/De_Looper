@@ -139,6 +139,9 @@ def normalize_and_stream(media_files, last_played_id=None):
                     while chunk := f.read(65536):
                         stream_proc.stdin.write(chunk)
             else:
+                # Print the message only if the file is not preprocessed
+                print(f"Normalizing and streaming: {media_file}")
+
                 # FFmpeg command to normalize the video and pipe it to stdout (H.264 and AAC)
                 normalize_command = [
                     "ffmpeg",
@@ -154,8 +157,6 @@ def normalize_and_stream(media_files, last_played_id=None):
                     "-f", "mpegts",  # Output format (MPEG-TS)
                     "-"  # Pipe output to stdout
                 ]
-
-                print(f"Normalizing and streaming: {media_file}")
 
                 # Start the normalization process and pipe its output to the streaming process
                 normalize_proc = subprocess.Popen(normalize_command, stdout=subprocess.PIPE)
