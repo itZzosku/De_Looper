@@ -68,11 +68,11 @@ def main():
     videos = load_videos_from_json()
 
     # Define the date range (hardcoded)
-    start_date = "2023-01-01"  # Set start date here
-    end_date = "2023-02-01"  # Set end date here
+    start_date = "2024-01-01"  # Set start date here
+    end_date = "2025-01-01"  # Set end date here
 
     # Define the download path
-    download_path = r"E:\Niilo22\2023"  # Set your download path here
+    download_path = r"E:\Niilo22\2024"  # Set your download path here
 
     # Ensure the download path exists, create if not
     if not os.path.exists(download_path):
