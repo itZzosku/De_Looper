@@ -49,6 +49,7 @@ def play_transition():
     ffmpeg_command = [
         "ffmpeg",
         "-f", "lavfi",  # Use lavfi to generate video and audio
+        "-loglevel", "error",  # Only show errors
         "-i", "color=c=black:s=1280x720:r=30:d=3",  # Black screen, 1280x720 resolution, 3 seconds long
         "-f", "lavfi",  # Generate silent audio
         "-i", "anullsrc=r=44100:cl=stereo",  # Generate silent audio at 44.1kHz, stereo
