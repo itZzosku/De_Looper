@@ -3,6 +3,7 @@ import os
 import json
 import signal
 import sys  # To handle command-line arguments
+import time  # For introducing small delays to improve transitions
 
 # Global variables for processes
 stream_proc = None
@@ -31,12 +32,40 @@ stream_command = [
     "-c:a", "aac",  # Encode audio to AAC
     "-ar", "44100",  # Audio sample rate
     "-b:v", "2300k",  # Set video bitrate to 2300k to match normalization
-    "-bufsize", "4600k",  # Buffer size (2x the video bitrate to handle spikes)
     "-maxrate", "2300k",  # Max bitrate set to 2300k to align with clip encoding
     "-g", "60",  # Keyframe interval (for 30fps, keyframe every 2 seconds)
+    "-flvflags", "no_duration_filesize",  # Helps avoid certain FLV-specific issues
     "-f", "flv",  # Output format for Twitch
     Twitch_URL  # Streaming URL for Twitch
 ]
+
+# Function to play a 3-second black screen transition
+def play_transition():
+    # Play a 3-second black screen transition
+    print("Playing 3-second black screen transition between clips...")
+
+    # FFmpeg command to generate a black screen (3 seconds, 1280x720 resolution)
+    ffmpeg_command = [
+        "ffmpeg",
+        "-f", "lavfi",  # Use lavfi to generate input
+        "-loglevel", "error",  # Only show errors
+        "-i", "color=c=black:s=1280x720:r=30:d=3",  # Black screen, 1280x720 resolution, 3 seconds long
+        "-c:v", "libx264",  # Encode video to H.264
+        "-t", "3",  # Duration of the black screen (3 seconds)
+        "-f", "mpegts",  # Output format for Twitch
+        "-"  # Pipe output to stdout
+    ]
+
+    # Play the black screen and pipe it into the stream
+    transition_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
+
+    while True:
+        data = transition_proc.stdout.read(65536)
+        if not data:  # Break when done playing the transition
+            break
+        stream_proc.stdin.write(data)  # Pipe black screen data to the stream
+
+    transition_proc.wait()
 
 
 # Function to read playlist from the JSON file with UTF-8 encoding (for special characters)
@@ -83,71 +112,54 @@ signal.signal(signal.SIGTERM, graceful_shutdown)
 
 # Function to pipe media to the streaming FFmpeg instance
 def pipe_to_stream(media_file, is_preprocessed):
-    global stream_proc, normalize_proc, stream_command
+    global stream_proc, normalize_proc
 
-    try:
-        if is_preprocessed:
-            # Pipe preprocessed file to the streaming FFmpeg instance without re-encoding
-            print(f"Streaming preprocessed file (no re-encoding): {media_file}")
+    if is_preprocessed:
+        # Pipe preprocessed file to the streaming FFmpeg instance without re-encoding
+        print(f"Streaming preprocessed file (no re-encoding): {media_file}")
 
-            # FFmpeg command to just copy streams and pipe to Twitch (no encoding)
-            ffmpeg_command = [
-                "ffmpeg",
-                "-loglevel", "error",  # Only show errors
-                "-re",  # Ensure real-time streaming
-                "-i", media_file,  # Input the preprocessed file
-                "-c", "copy",  # Copy the video and audio without re-encoding
-                "-f", "flv",  # Output format for Twitch
-                "pipe:1"  # Pipe output to stdout
-            ]
+        # FFmpeg command to just copy streams and pipe to Twitch (no encoding)
+        ffmpeg_command = [
+            "ffmpeg",
+            "-loglevel", "error",  # Only show errors
+            "-re",  # Ensure real-time streaming
+            "-i", media_file,  # Input the preprocessed file
+            "-c", "copy",  # Copy the video and audio without re-encoding
+            "-f", "mpegts",  # Output format to pipe to Twitch
+            "-"  # Pipe output to stdout
+        ]
 
-            # Start the FFmpeg process to stream the preprocessed file
-            ffmpeg_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
+    else:
+        # Normalize and pipe the video to the streaming FFmpeg instance
+        print(f"Normalizing and streaming: {media_file}")
 
-            while True:
-                data = ffmpeg_proc.stdout.read(65536)
-                if not data:  # If no data, break the loop
-                    break
-                stream_proc.stdin.write(data)  # Pipe data to the streaming process
-            ffmpeg_proc.wait()
+        # FFmpeg command to normalize the video and pipe it to stdout (H.264 and AAC)
+        ffmpeg_command = [
+            "ffmpeg",
+            "-loglevel", "error",  # Only show errors
+            "-i", media_file,  # Input video file
+            "-s", "1280x720",  # Scale video to 720p
+            "-c:v", "libx264",  # Video codec H.264
+            "-b:v", "2300k",  # Reduce video bitrate
+            "-g", "60",  # Keyframe interval
+            "-r", "30",  # Frame rate
+            "-c:a", "aac",  # Audio codec AAC
+            "-ar", "44100",  # Audio sample rate
+            "-f", "mpegts",  # Output format (MPEG-TS)
+            "-"  # Pipe output to stdout
+        ]
 
-        else:
-            # Normalize and pipe the video to the streaming FFmpeg instance
-            print(f"Normalizing and streaming: {media_file}")
+    # Start the normalization/preprocessing process and pipe its output to the streaming process
+    normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
 
-            # FFmpeg command to normalize the video and pipe it to stdout (H.264 and AAC)
-            normalize_command = [
-                "ffmpeg",
-                "-loglevel", "error",  # Only show errors
-                "-i", media_file,  # Input video file
-                "-s", "1280x720",  # Scale video to 720p
-                "-c:v", "libx264",  # Video codec H.264
-                "-b:v", "2300k",  # Reduce video bitrate
-                "-g", "60",  # Keyframe interval
-                "-r", "30",  # Frame rate
-                "-c:a", "aac",  # Audio codec AAC
-                "-ar", "44100",  # Audio sample rate
-                "-f", "mpegts",  # Output format (MPEG-TS)
-                "-"  # Pipe output to stdout
-            ]
+    # Pipe data from the normalization/preprocessed process to the stream continuously
+    while True:
+        data = normalize_proc.stdout.read(65536)
+        if not data:  # If no data, break the loop
+            break
+        stream_proc.stdin.write(data)  # Write normalized data to the streaming process
 
-            # Start the normalization process and pipe its output to the streaming process
-            normalize_proc = subprocess.Popen(normalize_command, stdout=subprocess.PIPE)
-
-            while True:
-                data = normalize_proc.stdout.read(65536)
-                if not data:  # If no data, break the loop
-                    break
-                stream_proc.stdin.write(data)  # Write normalized data to the streaming process
-            normalize_proc.wait()
-
-    except BrokenPipeError:
-        print("Broken pipe error occurred. Restarting the streaming process...")
-        stream_proc.terminate()  # Terminate the existing stream process
-
-        # Restart the stream process
-        stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
-        print("Streaming process restarted successfully.")
+    normalize_proc.wait()
 
 
 # Function to start streaming the videos
@@ -173,6 +185,9 @@ def normalize_and_stream(media_files, last_played_id=None):
             media = media_files[idx]
             media_file = media.get('file_path')
             media_id = media.get('id')
+
+            # Play a black screen transition between clips
+            play_transition()
 
             # Check if the file has "_processed.mp4" in the name (indicating it is already processed)
             if "_processed.mp4" in media_file and os.path.exists(media_file):
