@@ -2,8 +2,7 @@ import subprocess
 import os
 import json
 import signal
-import threading
-import sys  # Import sys to handle command-line arguments
+import sys  # To handle command-line arguments
 
 # Twitch configuration
 config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -18,16 +17,10 @@ script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory whe
 playlist_json = os.path.join(script_dir, "playlist.json")
 progress_json = os.path.join(script_dir, "progress.json")
 
-# Global variables to handle skip functionality
-stream_proc = None
-normalize_proc = None
-skip_next = False
-skip_to_id = None
-
 
 # Function to read playlist from the JSON file with UTF-8 encoding (for special characters)
 def get_media_files_from_playlist(json_file):
-    with open(json_file, 'r', encoding='utf-8') as f:  # Ensure UTF-8 encoding
+    with open(json_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return data.get("playlist", [])
 
@@ -47,25 +40,6 @@ def load_progress():
     return None
 
 
-# Function to handle the skip command in a separate thread
-def handle_skip_command():
-    global skip_next, skip_to_id
-    while True:
-        command = input()  # Listen for command input
-        command_parts = command.strip().split()
-
-        if command_parts[0].lower() == 'skip':
-            skip_next = True  # Set the skip flag to True
-            print("Skipping to the next video...")
-
-        elif command_parts[0].lower() == 'skiptoid' and len(command_parts) > 1:
-            try:
-                skip_to_id = int(command_parts[1])  # Set the skip_to_id to the entered ID
-                print(f"Skipping to video with ID: {skip_to_id}")
-            except ValueError:
-                print("Invalid ID entered. Please enter a valid numeric ID.")
-
-
 # Graceful shutdown function
 def graceful_shutdown(signum, frame):
     global stream_proc, normalize_proc
@@ -82,16 +56,76 @@ signal.signal(signal.SIGINT, graceful_shutdown)
 signal.signal(signal.SIGTERM, graceful_shutdown)
 
 
-# Function to normalize and pipe the video to the streaming FFmpeg instance
+# Function to pipe media to the streaming FFmpeg instance
+def pipe_to_stream(media_file, is_preprocessed):
+    global stream_proc, normalize_proc
+
+    if is_preprocessed:
+        # Pipe preprocessed file to the streaming FFmpeg instance without re-encoding
+        print(f"Streaming preprocessed file (no re-encoding): {media_file}")
+
+        # FFmpeg command to just copy streams and pipe to Twitch (no encoding)
+        ffmpeg_command = [
+            "ffmpeg",
+            "-loglevel", "error",  # Only show errors
+            "-re",  # Ensure real-time streaming
+            "-i", media_file,  # Input the preprocessed file
+            "-c", "copy",  # Copy the video and audio without re-encoding
+            "-f", "flv",  # Output format for Twitch
+            "pipe:1"  # Pipe output to stdout
+        ]
+
+        # Start the FFmpeg process to stream the preprocessed file
+        ffmpeg_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
+
+        while True:
+            data = ffmpeg_proc.stdout.read(65536)
+            if not data:  # If no data, break the loop
+                break
+            stream_proc.stdin.write(data)  # Pipe data to the streaming process
+        ffmpeg_proc.wait()
+
+    else:
+        # Normalize and pipe the video to the streaming FFmpeg instance
+        print(f"Normalizing and streaming: {media_file}")
+
+        # FFmpeg command to normalize the video and pipe it to stdout (H.264 and AAC)
+        normalize_command = [
+            "ffmpeg",
+            "-loglevel", "error",  # Only show errors
+            "-i", media_file,  # Input video file
+            "-s", "1280x720",  # Scale video to 720p
+            "-c:v", "libx264",  # Video codec H.264
+            "-b:v", "2300k",  # Reduce video bitrate
+            "-g", "60",  # Keyframe interval
+            "-r", "30",  # Frame rate
+            "-c:a", "aac",  # Audio codec AAC
+            "-ar", "44100",  # Audio sample rate
+            "-f", "mpegts",  # Output format (MPEG-TS)
+            "-"  # Pipe output to stdout
+        ]
+
+        # Start the normalization process and pipe its output to the streaming process
+        normalize_proc = subprocess.Popen(normalize_command, stdout=subprocess.PIPE)
+
+        while True:
+            data = normalize_proc.stdout.read(65536)
+            if not data:  # If no data, break the loop
+                break
+            stream_proc.stdin.write(data)  # Write normalized data to the streaming process
+        normalize_proc.wait()
+
+
+# Function to start streaming the videos
 def normalize_and_stream(media_files, last_played_id=None):
-    global stream_proc, normalize_proc, skip_next, skip_to_id
+    global stream_proc
 
     # FFmpeg command to stream to Twitch (this instance is always running)
     stream_command = [
         "ffmpeg",
         "-loglevel", "error",  # Only show errors
         "-re",  # Ensure real-time streaming
-        "-i", "pipe:0",  # Read from stdin (pipe from normalization FFmpeg process)
+        "-i", "pipe:0",  # Read from stdin (pipe from normalization FFmpeg process or file stream)
         "-c:v", "libx264",  # Encode video to H.264
         "-c:a", "aac",  # Encode audio to AAC
         "-ar", "44100",  # Audio sample rate
@@ -108,7 +142,7 @@ def normalize_and_stream(media_files, last_played_id=None):
     if last_played_id is not None:
         for i, media in enumerate(media_files):
             if media['id'] == last_played_id:
-                start_index = i + 1  # Start from the next video after the last played one
+                start_index = i  # Start from the requested video
                 break
 
     # Iterate through media files and normalize/pipe each clip starting from the last played id
@@ -119,61 +153,13 @@ def normalize_and_stream(media_files, last_played_id=None):
             media_file = media.get('file_path')
             media_id = media.get('id')
 
-            # Check if skip_to_id was set and jump to the requested id
-            if skip_to_id is not None:
-                # Look for the media with the matching id
-                media = next((m for m in media_files if m['id'] == skip_to_id), None)
-                if media:
-                    idx = media_files.index(media)  # Set the index to the found media
-                    skip_to_id = None  # Reset the skip_to_id flag
-                else:
-                    print(f"Video with ID: {skip_to_id} not found.")
-                    skip_to_id = None
-                continue
-
             # Check if the file has "_processed.mp4" in the name (indicating it is already processed)
-            if "_processed.mp4" in media_file:
-                # Stream preprocessed file if available
-                if os.path.exists(media_file):
-                    print(f"Streaming preprocessed file: {media_file}")
-                    with open(media_file, 'rb') as f:
-                        while chunk := f.read(65536):
-                            stream_proc.stdin.write(chunk)
-                else:
-                    print(f"Preprocessed file not found: {media_file}")
+            if "_processed.mp4" in media_file and os.path.exists(media_file):
+                # Pipe preprocessed file to the streaming FFmpeg instance (no re-encoding)
+                pipe_to_stream(media_file, is_preprocessed=True)
             else:
-                # If the file is not preprocessed, normalize and stream it
-                print(f"Normalizing and streaming: {media_file}")
-
-                # FFmpeg command to normalize the video and pipe it to stdout (H.264 and AAC)
-                normalize_command = [
-                    "ffmpeg",
-                    "-loglevel", "error",  # Only show errors
-                    "-i", media_file,  # Input video file
-                    "-s", "1280x720",  # Scale video to 720p
-                    "-c:v", "libx264",  # Video codec H.264
-                    "-b:v", "2300k",  # Reduce video bitrate
-                    "-g", "60",  # Keyframe interval
-                    "-r", "30",  # Frame rate
-                    "-c:a", "aac",  # Audio codec AAC
-                    "-ar", "44100",  # Audio sample rate
-                    "-f", "mpegts",  # Output format (MPEG-TS)
-                    "-"  # Pipe output to stdout
-                ]
-
-                # Start the normalization process and pipe its output to the streaming process
-                normalize_proc = subprocess.Popen(normalize_command, stdout=subprocess.PIPE)
-
-                while True:
-                    data = normalize_proc.stdout.read(65536)
-                    if not data or skip_next or skip_to_id is not None:  # If no data or skip is triggered, break the loop
-                        if skip_next or skip_to_id is not None:
-                            normalize_proc.terminate()  # Stop the current normalization process
-                            stream_proc.stdin.flush()  # Flush remaining data before starting next clip
-                            skip_next = False  # Reset skip flag for the next video
-                        break
-                    stream_proc.stdin.write(data)
-                normalize_proc.wait()
+                # Normalize and pipe the non-preprocessed file
+                pipe_to_stream(media_file, is_preprocessed=False)
 
             # Save progress after each clip is streamed
             save_progress(media_id)
@@ -197,10 +183,6 @@ def main():
             start_id = None
     else:
         start_id = None
-
-    # Start a thread to listen for the "skip" and "skiptoid" commands
-    skip_thread = threading.Thread(target=handle_skip_command, daemon=True)
-    skip_thread.start()
 
     # Get media files from the playlist JSON
     print(f"Using playlist: {playlist_json}")
