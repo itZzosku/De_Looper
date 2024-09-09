@@ -213,7 +213,7 @@ def normalize_and_stream(media_files, last_played_id=None):
             media = media_files[idx]
             media_file = media.get('file_path')
             media_id = media.get('id')
-            media_title = media.get('title', 'Untitled')  # Get the title from the playlist
+            media_title = media.get('name', 'Untitled')  # Get the title from the playlist
             media_release_date = media.get('release_date', 'Unknown')  # Get the release date
 
             # Send a message to Twitch chat with the video title and release date
