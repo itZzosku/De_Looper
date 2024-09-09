@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 import os
+import re
 
 
 def load_videos_from_json(filename='videos.json'):
@@ -36,6 +37,11 @@ def get_date_string(published_at):
     return dt.strftime('%Y%m%d')
 
 
+def sanitize_filename(title):
+    # Replace problematic characters (e.g., slashes, colons, etc.) with hyphens
+    return re.sub(r'[\\/:"*?<>|]', '-', title)
+
+
 def download_videos(videos, download_path):
     # Define the archive file path in the same folder as the downloaded videos
     archive_path = os.path.join(download_path, "archive.txt")
@@ -45,7 +51,7 @@ def download_videos(videos, download_path):
     # Download each video using yt-dlp with a specified download path and custom file name
     for index, video in enumerate(videos, start=1):
         video_id = video['id']
-        video_title = video['name']
+        video_title = sanitize_filename(video['name'])  # Sanitize the video title to avoid file naming issues
         published_at = video['publishedAt']
 
         # Generate the timestamp and date string
@@ -59,7 +65,8 @@ def download_videos(videos, download_path):
         print(f"Downloading {index}/{total_videos}: {video_title}")
 
         # Use yt-dlp with the custom output template and archive file
-        os.system(f'yt-dlp --download-archive "{archive_path}" -o "{output_template}.%(ext)s" https://www.youtube.com/watch?v={video_id}')
+        os.system(
+            f'yt-dlp --download-archive "{archive_path}" -o "{output_template}.%(ext)s" https://www.youtube.com/watch?v={video_id}')
         print(f"Downloaded {video_title} as {output_template}")
 
 
