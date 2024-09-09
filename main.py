@@ -118,7 +118,6 @@ def normalize_and_stream(media_files, last_played_id=None):
             media = media_files[idx]
             media_file = media.get('file_path')
             media_id = media.get('id')
-            processed_file = media_file.replace('.mp4', '_processed.mp4')
 
             # Check if skip_to_id was set and jump to the requested id
             if skip_to_id is not None:
@@ -132,14 +131,18 @@ def normalize_and_stream(media_files, last_played_id=None):
                     skip_to_id = None
                 continue
 
-            # Stream preprocessed file if available
-            if os.path.exists(processed_file):
-                print(f"Streaming preprocessed file: {processed_file}")
-                with open(processed_file, 'rb') as f:
-                    while chunk := f.read(65536):
-                        stream_proc.stdin.write(chunk)
+            # Check if the file has "_processed.mp4" in the name (indicating it is already processed)
+            if "_processed.mp4" in media_file:
+                # Stream preprocessed file if available
+                if os.path.exists(media_file):
+                    print(f"Streaming preprocessed file: {media_file}")
+                    with open(media_file, 'rb') as f:
+                        while chunk := f.read(65536):
+                            stream_proc.stdin.write(chunk)
+                else:
+                    print(f"Preprocessed file not found: {media_file}")
             else:
-                # Print the message only if the file is not preprocessed
+                # If the file is not preprocessed, normalize and stream it
                 print(f"Normalizing and streaming: {media_file}")
 
                 # FFmpeg command to normalize the video and pipe it to stdout (H.264 and AAC)
