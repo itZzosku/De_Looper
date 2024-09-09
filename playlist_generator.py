@@ -65,11 +65,15 @@ def extract_release_data(filename):
         return "1970-01-01", "00:00:00"  # Default fallback values
 
 
-# Function to extract the video name from filename
+# Function to extract the video name from filename (after the second underscore and before third underscore or .mp4)
 def extract_video_name(filename):
     try:
-        name_part = filename.split('_', 2)[2]  # Get the part after the second underscore
-        return name_part.replace('.mp4', '')  # Remove the .mp4 extension
+        name_part = filename.split('_', 3)  # Split filename into parts
+        if len(name_part) > 2:
+            # Take the part after the second underscore, but before the third underscore or .mp4
+            return name_part[2].split('_')[0].replace('.mp4', '')
+        else:
+            return "Unknown Title"
     except Exception as e:
         print(f"Error extracting video name from {filename}: {e}")
         return "Unknown Title"
