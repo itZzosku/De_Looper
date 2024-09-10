@@ -3,21 +3,20 @@ import json
 import subprocess
 from datetime import datetime, timezone
 
-# Ask for the video folder as input
-video_folder = input("Enter the path to your video folder: ")
+# Ask for the video folders as input, separated by commas
+video_folders = input("Enter the paths to your video folders, separated by commas: ").split(',')
 
 # Ask whether to use Windows or Linux-style paths
 path_style = input("Choose path style (1 for Windows, 2 for Linux): ")
 
+# Apply the correct path style
 if path_style == "1":
-    # If Windows, use double backslashes
-    video_folder = video_folder.replace("/", "\\")
+    video_folders = [folder.strip().replace("/", "\\") for folder in video_folders]
 elif path_style == "2":
-    # If Linux, use single forward slashes
-    video_folder = video_folder.replace("\\", "/")
+    video_folders = [folder.strip().replace("\\", "/") for folder in video_folders]
 else:
     print("Invalid choice. Using default path style (Linux).")
-    video_folder = video_folder.replace("\\", "/")
+    video_folders = [folder.strip().replace("\\", "/") for folder in video_folders]
 
 # Output JSON will be saved in the same folder as this script
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -84,37 +83,42 @@ playlist = {
     "playlist": []
 }
 
-# List of all video files
-video_files = sorted([f for f in os.listdir(video_folder) if f.endswith('.mp4')])
-
-# Total number of files
-total_files = len(video_files)
-
 # Initialize a variable to hold the total duration in seconds
 total_duration = 0
+file_id = 1  # Start file ID from 1
 
-# Scan the folder for video files and generate playlist entries
-for index, video_file in enumerate(video_files):
-    file_path = os.path.join(video_folder, video_file)
-    duration = get_video_duration(file_path)
-    total_duration += duration  # Add each clip's duration to total
+# Go through each folder in the list
+for video_folder in video_folders:
+    # List all video files in the current folder
+    video_files = sorted([f for f in os.listdir(video_folder) if f.endswith('.mp4')])
 
-    # Extract release date, time, and video name from the filename
-    release_date, release_time = extract_release_data(video_file)
-    video_name = extract_video_name(video_file)
+    # Total number of files in the current folder
+    total_files = len(video_files)
 
-    entry = {
-        "id": index + 1,  # Assuming index + 1 is the id
-        "name": video_name,
-        "file_path": file_path,
-        "duration": duration,
-        "release_date": release_date,
-        "release_time": release_time
-    }
-    playlist["playlist"].append(entry)
+    # Scan the folder for video files and generate playlist entries
+    for index, video_file in enumerate(video_files):
+        file_path = os.path.join(video_folder, video_file)
+        duration = get_video_duration(file_path)
+        total_duration += duration  # Add each clip's duration to total
 
-    # Print progress
-    print(f"Processing file {index + 1}/{total_files}: {video_file}")
+        # Extract release date, time, and video name from the filename
+        release_date, release_time = extract_release_data(video_file)
+        video_name = extract_video_name(video_file)
+
+        entry = {
+            "id": file_id,  # Use a global file_id for unique IDs
+            "name": video_name,
+            "file_path": file_path,
+            "duration": duration,
+            "release_date": release_date,
+            "release_time": release_time
+        }
+        playlist["playlist"].append(entry)
+
+        # Print progress
+        print(f"Processing file {file_id}: {video_file}")
+
+        file_id += 1  # Increment the file ID after each file
 
 # Add total video duration in hours, minutes, and seconds to the playlist
 playlist["total_duration"] = format_duration(total_duration)
