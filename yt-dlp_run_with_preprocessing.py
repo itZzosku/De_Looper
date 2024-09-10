@@ -74,11 +74,15 @@ def preprocess_file(input_file, output_file, encoder):
 
 
 def check_existing_file(video_title, download_path):
+    # Sanitize the video title to match how filenames are sanitized
+    sanitized_video_title = sanitize_filename(video_title)
+
     for file in os.listdir(download_path):
         if file.endswith("_processed.mp4"):
             # Extract the part of the filename that contains the video title
             file_title = file.split('_', 2)[-1].rsplit('_', 1)[0]  # Extracts 'Näin paukuteltiin' from the filename
-            if file_title == video_title:
+
+            if file_title == sanitized_video_title:
                 return os.path.join(download_path, file)  # Return the full path if a match is found
     return None
 
@@ -89,6 +93,7 @@ def download_and_preprocess_videos(videos, download_path, encoder):
 
     total_videos = len(videos)
     processed_videos = 0
+    skipped_videos = 0  # Track skipped videos
 
     # Download and process each video
     for index, video in enumerate(videos, start=1):
@@ -109,6 +114,9 @@ def download_and_preprocess_videos(videos, download_path, encoder):
         existing_processed_file = check_existing_file(video_title, download_path)
         if existing_processed_file:
             print(f"Processed file already exists: {existing_processed_file}. Skipping download and processing.")
+            skipped_videos += 1  # Increment skipped video count
+            # Display progress, including skipped files
+            print(f"Progress: {index}/{total_videos} videos processed or skipped.")
             continue
 
         # Use yt-dlp to download the video only if it doesn't exist
@@ -121,6 +129,8 @@ def download_and_preprocess_videos(videos, download_path, encoder):
         # Check if the video was actually downloaded
         if not os.path.exists(downloaded_file):
             print(f"Video {video_title} was skipped or failed to download. Moving to the next one.")
+            skipped_videos += 1
+            print(f"Progress: {index}/{total_videos} videos processed or skipped.")
             continue
 
         print(f"Downloaded or found existing file: {downloaded_file}")
@@ -135,7 +145,10 @@ def download_and_preprocess_videos(videos, download_path, encoder):
 
         # Increment the processed video count and show progress
         processed_videos += 1
-        print(f"Progress: {processed_videos}/{total_videos} videos processed.")
+        print(f"Progress: {index}/{total_videos} videos processed or skipped.")
+
+    # Final summary
+    print(f"Processing complete. {processed_videos} videos processed, {skipped_videos} videos skipped.")
 
 
 def main():
