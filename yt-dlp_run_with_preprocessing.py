@@ -122,18 +122,16 @@ def main():
     # Load videos from the JSON file
     videos = load_videos_from_json()
 
-    # Define the date range (hardcoded)
-    start_date = "2023-01-30"  # Set start date here
-    end_date = "2024-01-01"  # Set end date here
-
-    # Define the download path
-    download_path = r"E:\Niilo22\2023"  # Set your download path here
+    # Take user input for date range and download path
+    start_date = input("Enter the start date (YYYY-MM-DD): ")
+    end_date = input("Enter the end date (YYYY-MM-DD): ")
+    download_path = input("Enter the download path: ")
 
     # Ensure the download path exists, create if not
     if not os.path.exists(download_path):
         os.makedirs(download_path)
 
-    # Filter videos by the date range provided in the code
+    # Filter videos by the date range provided by the user
     filtered_videos = filter_videos_by_date(videos, start_date, end_date)
 
     # Print how many videos will be downloaded
