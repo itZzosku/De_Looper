@@ -67,6 +67,16 @@ def preprocess_file(input_file, output_file):
         print(f"Error preprocessing file {input_file}: {e}")
 
 
+def check_existing_file(video_title, download_path):
+    for file in os.listdir(download_path):
+        if file.endswith("_processed.mp4"):
+            # Extract the part of the filename that contains the video title
+            file_title = file.split('_', 2)[-1].rsplit('_', 1)[0]  # Extracts 'Näin paukuteltiin' from the filename
+            if file_title == video_title:
+                return os.path.join(download_path, file)  # Return the full path if a match is found
+    return None
+
+
 def download_and_preprocess_videos(videos, download_path):
     # Define the archive file path in the same folder as the downloaded videos
     archive_path = os.path.join(download_path, "archive.txt")
@@ -89,10 +99,13 @@ def download_and_preprocess_videos(videos, download_path):
         downloaded_file = f"{output_template}.mp4"
         processed_file = f"{output_template}_processed.mp4"
 
-        # Print running number and video count
-        print(f"Downloading {index}/{total_videos}: {video_title}")
+        # Check if the video has already been downloaded or processed by comparing video titles
+        existing_processed_file = check_existing_file(video_title, download_path)
+        if existing_processed_file:
+            print(f"Processed file already exists: {existing_processed_file}. Skipping download and processing.")
+            continue
 
-        # Use yt-dlp to download the video
+        # Use yt-dlp to download the video only if it doesn't exist
         yt_dlp_command = (
             f'yt-dlp --download-archive "{archive_path}" '
             f'-o "{output_template}.%(ext)s" https://www.youtube.com/watch?v={video_id}'
@@ -100,22 +113,23 @@ def download_and_preprocess_videos(videos, download_path):
         download_result = os.system(yt_dlp_command)
 
         # Check if the video was actually downloaded
+        if not os.path.exists(downloaded_file):
+            print(f"Video {video_title} was skipped or failed to download. Moving to the next one.")
+            continue
+
+        print(f"Downloaded or found existing file: {downloaded_file}")
+
+        # Preprocess the downloaded file
+        preprocess_file(downloaded_file, processed_file)
+
+        # Remove the original file after preprocessing
         if os.path.exists(downloaded_file):
-            print(f"Downloaded {video_title} as {downloaded_file}")
-            # Preprocess the downloaded file
-            preprocess_file(downloaded_file, processed_file)
+            os.remove(downloaded_file)
+            print(f"Original file deleted: {downloaded_file}")
 
-            # Remove the original file after preprocessing
-            if os.path.exists(downloaded_file):
-                os.remove(downloaded_file)
-                print(f"Original file deleted: {downloaded_file}")
-
-            # Increment the processed video count and show progress
-            processed_videos += 1
-            print(f"Progress: {processed_videos}/{total_videos} videos processed.")
-        else:
-            # If the video was skipped, move on to the next one
-            print(f"Video {video_title} was skipped (already in archive). Skipping ffmpeg processing.")
+        # Increment the processed video count and show progress
+        processed_videos += 1
+        print(f"Progress: {processed_videos}/{total_videos} videos processed.")
 
 
 def main():
