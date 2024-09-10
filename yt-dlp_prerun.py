@@ -48,6 +48,7 @@ def get_videos_from_channel(channel_id):
     # Get all videos from the uploads playlist
     videos = []
     next_page_token = None
+    video_count = 0  # Initialize the video counter
 
     while True:
         playlist_request = youtube.playlistItems().list(
@@ -68,11 +69,16 @@ def get_videos_from_channel(channel_id):
                 'publishedAt': published_at
             })
 
+            # Increment the video counter and print the progress
+            video_count += 1
+            print(f"Processed video {video_count}: {video_title}")
+
         next_page_token = playlist_response.get('nextPageToken')
 
         if next_page_token is None:
             break
 
+    print(f"Total videos processed: {video_count}")
     return videos
 
 
