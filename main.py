@@ -217,7 +217,7 @@ def normalize_and_stream(media_files, last_played_id=None):
             media_release_date = media.get('release_date', 'Unknown')  # Get the release date
 
             # Send a message to Twitch chat with the video title and release date
-            message = f"Nyt toistetaan: {media_title} (Julkaisu päivä: {media_release_date})"
+            message = f"Nyt toistetaan: {media_title} (Julkaisupäivä: {media_release_date})"
             send_message_to_chat(message)
 
             if "_processed.mp4" in media_file and os.path.exists(media_file):
