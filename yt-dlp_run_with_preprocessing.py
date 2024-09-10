@@ -43,20 +43,26 @@ def sanitize_filename(title):
     return re.sub(r'[\\/:"*?<>|]', '-', title)
 
 
-def preprocess_file(input_file, output_file):
+def preprocess_file(input_file, output_file, encoder):
     # Check if input file exists before attempting to preprocess
     if not os.path.exists(input_file):
         print(f"Error: Input file does not exist: {input_file}")
         return
 
-    # Run ffmpeg with the given parameters
+    # Set encoding parameters based on the encoder
+    if encoder == "h264_nvenc":
+        video_codec = 'h264_nvenc'
+    else:
+        video_codec = 'libx264'
+
+    # Run ffmpeg with the selected encoder
     try:
         subprocess.run([
             'ffmpeg',
             '-loglevel', 'error',
             '-i', input_file,
             '-s', '1280x720',  # Scale to 720p
-            '-c:v', 'h264_nvenc', '-preset', 'fast', '-b:v', '2300k',  # Use h264_nvenc for GPU encoding
+            '-c:v', video_codec, '-preset', 'fast', '-b:v', '2300k',  # Use the chosen encoder
             '-r', '30',  # Set frame rate to 30fps
             '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',  # AAC audio
             '-movflags', '+faststart',  # Fast start for streaming
@@ -77,7 +83,7 @@ def check_existing_file(video_title, download_path):
     return None
 
 
-def download_and_preprocess_videos(videos, download_path):
+def download_and_preprocess_videos(videos, download_path, encoder):
     # Define the archive file path in the same folder as the downloaded videos
     archive_path = os.path.join(download_path, "archive.txt")
 
@@ -120,7 +126,7 @@ def download_and_preprocess_videos(videos, download_path):
         print(f"Downloaded or found existing file: {downloaded_file}")
 
         # Preprocess the downloaded file
-        preprocess_file(downloaded_file, processed_file)
+        preprocess_file(downloaded_file, processed_file, encoder)
 
         # Remove the original file after preprocessing
         if os.path.exists(downloaded_file):
@@ -141,6 +147,18 @@ def main():
     end_date = input("Enter the end date (YYYY-MM-DD): ")
     download_path = input("Enter the download path: ")
 
+    # Ask the user to select the encoder (1 for h264_nvenc, 2 for libx264)
+    encoder_choice = input("Select encoder: 1 for h264_nvenc (NVIDIA GPU), 2 for libx264 (CPU): ").strip()
+
+    # Map the user's choice to the appropriate encoder
+    if encoder_choice == '1':
+        encoder = 'h264_nvenc'
+    elif encoder_choice == '2':
+        encoder = 'libx264'
+    else:
+        print("Invalid choice! Defaulting to libx264.")
+        encoder = 'libx264'
+
     # Ensure the download path exists, create if not
     if not os.path.exists(download_path):
         os.makedirs(download_path)
@@ -157,7 +175,7 @@ def main():
         print(f"{video_count} videos will be downloaded from {start_date} to {end_date}.")
 
     # Download and preprocess the videos
-    download_and_preprocess_videos(filtered_videos, download_path)
+    download_and_preprocess_videos(filtered_videos, download_path, encoder)
 
     # Print a success message
     print(f"Downloaded and preprocessed videos from {start_date} to {end_date} to {download_path}.")
