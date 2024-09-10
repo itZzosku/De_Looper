@@ -2,7 +2,7 @@ import os
 import subprocess
 
 # Define the directory containing the video files
-video_directory = 'E:\\Niilo22\\2023\\'  # Update this with your directory
+video_directory = 'E:\\Niilo22\\2024\\'  # Update this with your directory
 
 
 # Function to preprocess video files, rename them with _processed, and delete the original
@@ -20,7 +20,7 @@ def preprocess_videos():
 
         print(f"Preprocessing {input_file}...")
 
-        # FFmpeg command to preprocess the video with GPU acceleration (h264_nvenc) and benchmark
+        # FFmpeg command to preprocess the video with GPU acceleration (h264_nvenc)
         subprocess.run([
             'ffmpeg',
             '-loglevel', 'error',  # Corrected: separate loglevel and error
