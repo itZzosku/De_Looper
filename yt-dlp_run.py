@@ -42,6 +42,16 @@ def sanitize_filename(title):
     return re.sub(r'[\\/:"*?<>|]', '-', title)
 
 
+def check_existing_file(video_title, download_path):
+    for file in os.listdir(download_path):
+        if file.endswith(".mp4"):
+            # Extract the part of the filename that contains the video title
+            file_title = file.split('_', 2)[-1].rsplit('_', 1)[0]  # Extract 'Näin paukuteltiin' from the filename
+            if file_title == video_title:
+                return os.path.join(download_path, file)  # Return the full path if a match is found
+    return None
+
+
 def download_videos(videos, download_path):
     # Define the archive file path in the same folder as the downloaded videos
     archive_path = os.path.join(download_path, "archive.txt")
@@ -61,12 +71,19 @@ def download_videos(videos, download_path):
         # Create the custom file name: "timestamp_date_video_title.ext"
         output_template = f"{download_path}/{unix_timestamp}_{date_string}_{video_title}"
 
+        # Check if the video has already been downloaded or processed by comparing video titles
+        existing_file = check_existing_file(video_title, download_path)
+        if existing_file:
+            print(f"File already exists: {existing_file}. Skipping download.")
+            continue
+
         # Print running number and video count
         print(f"Downloading {index}/{total_videos}: {video_title}")
 
         # Use yt-dlp with the custom output template and archive file
         os.system(
-            f'yt-dlp --download-archive "{archive_path}" -o "{output_template}.%(ext)s" https://www.youtube.com/watch?v={video_id}')
+            f'yt-dlp --download-archive "{archive_path}" -o "{output_template}.%(ext)s" https://www.youtube.com/watch?v={video_id}'
+        )
         print(f"Downloaded {video_title} as {output_template}")
 
 
