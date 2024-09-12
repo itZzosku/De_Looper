@@ -3,6 +3,7 @@ from datetime import datetime
 import os
 import re
 import subprocess
+import argparse
 
 
 def load_videos_from_json(filename='videos.json'):
@@ -152,46 +153,60 @@ def download_and_preprocess_videos(videos, download_path, encoder):
 
 
 def main():
+    # Set up argument parsing
+    parser = argparse.ArgumentParser(description="Download and preprocess videos.")
+    parser.add_argument('start_date', nargs='?', default=None, type=str, help="Start date (YYYY-MM-DD)")
+    parser.add_argument('end_date', nargs='?', default=None, type=str, help="End date (YYYY-MM-DD)")
+    parser.add_argument('download_path', nargs='?', default=None, type=str, help="Download path")
+    parser.add_argument('encoder', nargs='?', default=None, choices=['h264_nvenc', 'libx264'],
+                        help="Video encoder (h264_nvenc for GPU, libx264 for CPU)")
+
+    # Parse the arguments from the command line
+    args = parser.parse_args()
+
+    # If arguments are not provided, prompt the user for input
+    if args.start_date is None:
+        args.start_date = input("Enter the start date (YYYY-MM-DD): ")
+
+    if args.end_date is None:
+        args.end_date = input("Enter the end date (YYYY-MM-DD): ")
+
+    if args.download_path is None:
+        args.download_path = input("Enter the download path: ")
+
+    if args.encoder is None:
+        encoder_choice = input("Select encoder: 1 for h264_nvenc (NVIDIA GPU), 2 for libx264 (CPU): ").strip()
+        if encoder_choice == '1':
+            args.encoder = 'h264_nvenc'
+        elif encoder_choice == '2':
+            args.encoder = 'libx264'
+        else:
+            print("Invalid choice! Defaulting to libx264.")
+            args.encoder = 'libx264'
+
+    # Ensure the download path exists, create if not
+    if not os.path.exists(args.download_path):
+        os.makedirs(args.download_path)
+
     # Load videos from the JSON file
     videos = load_videos_from_json()
 
-    # Take user input for date range and download path
-    start_date = input("Enter the start date (YYYY-MM-DD): ")
-    end_date = input("Enter the end date (YYYY-MM-DD): ")
-    download_path = input("Enter the download path: ")
-
-    # Ask the user to select the encoder (1 for h264_nvenc, 2 for libx264)
-    encoder_choice = input("Select encoder: 1 for h264_nvenc (NVIDIA GPU), 2 for libx264 (CPU): ").strip()
-
-    # Map the user's choice to the appropriate encoder
-    if encoder_choice == '1':
-        encoder = 'h264_nvenc'
-    elif encoder_choice == '2':
-        encoder = 'libx264'
-    else:
-        print("Invalid choice! Defaulting to libx264.")
-        encoder = 'libx264'
-
-    # Ensure the download path exists, create if not
-    if not os.path.exists(download_path):
-        os.makedirs(download_path)
-
     # Filter videos by the date range provided by the user
-    filtered_videos = filter_videos_by_date(videos, start_date, end_date)
+    filtered_videos = filter_videos_by_date(videos, args.start_date, args.end_date)
 
     # Print how many videos will be downloaded
     video_count = len(filtered_videos)
     if video_count == 0:
-        print(f"No videos found between {start_date} and {end_date}.")
+        print(f"No videos found between {args.start_date} and {args.end_date}.")
         return
     else:
-        print(f"{video_count} videos will be downloaded from {start_date} to {end_date}.")
+        print(f"{video_count} videos will be downloaded from {args.start_date} to {args.end_date}.")
 
     # Download and preprocess the videos
-    download_and_preprocess_videos(filtered_videos, download_path, encoder)
+    download_and_preprocess_videos(filtered_videos, args.download_path, args.encoder)
 
     # Print a success message
-    print(f"Downloaded and preprocessed videos from {start_date} to {end_date} to {download_path}.")
+    print(f"Downloaded and preprocessed videos from {args.start_date} to {args.end_date} to {args.download_path}.")
 
 
 if __name__ == "__main__":
