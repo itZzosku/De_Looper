@@ -44,33 +44,33 @@ def sanitize_filename(title):
     return re.sub(r'[\\/:"*?<>|]', '-', title)
 
 
-def preprocess_file(input_file, output_file, encoder):
+def preprocess_file(input_file, output_file, codec):
     # Check if input file exists before attempting to preprocess
     if not os.path.exists(input_file):
         print(f"Error: Input file does not exist: {input_file}")
         return
 
-    # Set encoding parameters based on the encoder
-    if encoder == "h264_nvenc":
+    # Set encoding parameters based on the codec
+    if codec == "h264_nvenc":
         video_codec = 'h264_nvenc'
     else:
         video_codec = 'libx264'
 
-    # Run ffmpeg with the selected encoder
+    # Run ffmpeg with the selected codec
     try:
         subprocess.run([
             'ffmpeg',
             '-loglevel', 'error',
             '-i', input_file,
             '-s', '1280x720',  # Scale to 720p
-            '-c:v', video_codec, '-preset', 'fast', '-b:v', '2300k',  # Use the chosen encoder
+            '-c:v', video_codec, '-preset', 'fast', '-b:v', '2300k',
             '-r', '30',  # Set frame rate to 30fps
             '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',  # AAC audio
             '-movflags', '+faststart',  # Fast start for streaming
             output_file
-        ])
+        ], check=True)
         print(f"Preprocessing complete: {output_file}")
-    except Exception as e:
+    except subprocess.CalledProcessError as e:
         print(f"Error preprocessing file {input_file}: {e}")
 
 
@@ -81,14 +81,14 @@ def check_existing_file(video_title, download_path):
     for file in os.listdir(download_path):
         if file.endswith("_processed.mp4"):
             # Extract the part of the filename that contains the video title
-            file_title = file.split('_', 2)[-1].rsplit('_', 1)[0]  # Extracts 'Näin paukuteltiin' from the filename
+            file_title = file.split('_', 2)[-1].rsplit('_', 1)[0]
 
             if file_title == sanitized_video_title:
                 return os.path.join(download_path, file)  # Return the full path if a match is found
     return None
 
 
-def download_and_preprocess_videos(videos, download_path, encoder):
+def download_and_preprocess_videos(videos, download_path, codec):
     # Define the archive file path in the same folder as the downloaded videos
     archive_path = os.path.join(download_path, "archive.txt")
 
@@ -137,7 +137,7 @@ def download_and_preprocess_videos(videos, download_path, encoder):
         print(f"Downloaded or found existing file: {downloaded_file}")
 
         # Preprocess the downloaded file
-        preprocess_file(downloaded_file, processed_file, encoder)
+        preprocess_file(downloaded_file, processed_file, codec)
 
         # Remove the original file after preprocessing
         if os.path.exists(downloaded_file):
@@ -155,10 +155,12 @@ def download_and_preprocess_videos(videos, download_path, encoder):
 def main():
     # Set up argument parsing
     parser = argparse.ArgumentParser(description="Download and preprocess videos.")
-    parser.add_argument('start_date', nargs='?', default=None, type=str, help="Start date (YYYY-MM-DD)")
-    parser.add_argument('end_date', nargs='?', default=None, type=str, help="End date (YYYY-MM-DD)")
-    parser.add_argument('download_path', nargs='?', default=None, type=str, help="Download path")
-    parser.add_argument('encoder', nargs='?', default=None, choices=['h264_nvenc', 'libx264'],
+
+    # Changed arguments to use '--' format
+    parser.add_argument('--start_date', default=None, type=str, help="Start date (YYYY-MM-DD)")
+    parser.add_argument('--end_date', default=None, type=str, help="End date (YYYY-MM-DD)")
+    parser.add_argument('--folder', default=None, type=str, help="Download path")
+    parser.add_argument('--codec', default=None, choices=['h264_nvenc', 'libx264'],
                         help="Video encoder (h264_nvenc for GPU, libx264 for CPU)")
 
     # Parse the arguments from the command line
@@ -171,22 +173,22 @@ def main():
     if args.end_date is None:
         args.end_date = input("Enter the end date (YYYY-MM-DD): ")
 
-    if args.download_path is None:
-        args.download_path = input("Enter the download path: ")
+    if args.folder is None:
+        args.folder = input("Enter the download path: ")
 
-    if args.encoder is None:
-        encoder_choice = input("Select encoder: 1 for h264_nvenc (NVIDIA GPU), 2 for libx264 (CPU): ").strip()
-        if encoder_choice == '1':
-            args.encoder = 'h264_nvenc'
-        elif encoder_choice == '2':
-            args.encoder = 'libx264'
+    if args.codec is None:
+        codec_choice = input("Select codec: 1 for h264_nvenc (NVIDIA GPU), 2 for libx264 (CPU): ").strip()
+        if codec_choice == '1':
+            args.codec = 'h264_nvenc'
+        elif codec_choice == '2':
+            args.codec = 'libx264'
         else:
             print("Invalid choice! Defaulting to libx264.")
-            args.encoder = 'libx264'
+            args.codec = 'libx264'
 
     # Ensure the download path exists, create if not
-    if not os.path.exists(args.download_path):
-        os.makedirs(args.download_path)
+    if not os.path.exists(args.folder):
+        os.makedirs(args.folder)
 
     # Load videos from the JSON file
     videos = load_videos_from_json()
@@ -203,10 +205,10 @@ def main():
         print(f"{video_count} videos will be downloaded from {args.start_date} to {args.end_date}.")
 
     # Download and preprocess the videos
-    download_and_preprocess_videos(filtered_videos, args.download_path, args.encoder)
+    download_and_preprocess_videos(filtered_videos, args.folder, args.codec)
 
     # Print a success message
-    print(f"Downloaded and preprocessed videos from {args.start_date} to {args.end_date} to {args.download_path}.")
+    print(f"Downloaded and preprocessed videos from {args.start_date} to {args.end_date} to {args.folder}.")
 
 
 if __name__ == "__main__":
