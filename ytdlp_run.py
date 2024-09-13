@@ -1,13 +1,14 @@
 import json
-from datetime import datetime
 import os
 import re
+from datetime import datetime
+import ytdlp_prerun  # Import the module with the new name
 
 
 def load_videos_from_json(filename='videos.json'):
-    # Load video data from a JSON file
     with open(filename, 'r', encoding='utf-8') as json_file:
-        videos = json.load(json_file)
+        data = json.load(json_file)
+    videos = data.get('videos', [])
     return videos
 
 
@@ -46,7 +47,7 @@ def check_existing_file(video_title, download_path):
     for file in os.listdir(download_path):
         if file.endswith(".mp4"):
             # Extract the part of the filename that contains the video title
-            file_title = file.split('_', 2)[-1].rsplit('_', 1)[0]  # Extract 'Näin paukuteltiin' from the filename
+            file_title = file.split('_', 2)[-1].rsplit('_', 1)[0]
             if file_title == video_title:
                 return os.path.join(download_path, file)  # Return the full path if a match is found
     return None
@@ -88,7 +89,10 @@ def download_videos(videos, download_path):
 
 
 def main():
-    # Load videos from the JSON file
+    # Call the function from the imported module
+    ytdlp_prerun.check_and_update_videos_json()
+
+    # Now load videos from the JSON file
     videos = load_videos_from_json()
 
     # Take user input for date range and download path
@@ -100,7 +104,7 @@ def main():
     if not os.path.exists(download_path):
         os.makedirs(download_path)
 
-    # Filter videos by the date range provided in the code
+    # Filter videos by the date range provided
     filtered_videos = filter_videos_by_date(videos, start_date, end_date)
 
     # Print how many videos will be downloaded

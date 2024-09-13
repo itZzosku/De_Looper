@@ -4,12 +4,14 @@ import os
 import re
 import subprocess
 import argparse
+import ytdlp_prerun  # Import the module that checks and updates videos.json
 
 
 def load_videos_from_json(filename='videos.json'):
     # Load video data from a JSON file
     with open(filename, 'r', encoding='utf-8') as json_file:
-        videos = json.load(json_file)
+        data = json.load(json_file)
+    videos = data.get('videos', [])
     return videos
 
 
@@ -121,11 +123,17 @@ def download_and_preprocess_videos(videos, download_path, codec):
             continue
 
         # Use yt-dlp to download the video only if it doesn't exist
-        yt_dlp_command = (
-            f'yt-dlp --download-archive "{archive_path}" '
-            f'-o "{output_template}.%(ext)s" https://www.youtube.com/watch?v={video_id}'
-        )
-        download_result = os.system(yt_dlp_command)
+        yt_dlp_command = [
+            'yt-dlp', '--download-archive', archive_path,
+            '-o', f"{output_template}.%(ext)s", f"https://www.youtube.com/watch?v={video_id}"
+        ]
+        try:
+            subprocess.run(yt_dlp_command, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Error downloading video {video_title}: {e}")
+            skipped_videos += 1
+            print(f"Progress: {index}/{total_videos} videos processed or skipped.")
+            continue
 
         # Check if the video was actually downloaded
         if not os.path.exists(downloaded_file):
@@ -153,6 +161,9 @@ def download_and_preprocess_videos(videos, download_path, codec):
 
 
 def main():
+    # Call the function from the imported module to ensure videos.json is up-to-date
+    ytdlp_prerun.check_and_update_videos_json()
+
     # Set up argument parsing
     parser = argparse.ArgumentParser(description="Download and preprocess videos.")
 
