@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -154,7 +154,6 @@ def fetch_videos_from_youtube(existing_video_ids, existing_videos, filename='vid
 
 
 def check_and_update_videos_json(filename='videos.json'):
-    data_needs_update = False
     existing_videos = []
     existing_video_ids = set()
     data = None
@@ -166,38 +165,20 @@ def check_and_update_videos_json(filename='videos.json'):
                 data = json.load(json_file)
             # Check if data is a dictionary
             if isinstance(data, dict):
-                # Get the last updated timestamp
-                last_updated_str = data.get('lastUpdated', None)
-                if last_updated_str:
-                    # Parse last_updated_str and make it timezone-aware
-                    last_updated = datetime.strptime(last_updated_str, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
-                    # Now both datetime objects are timezone-aware in UTC
-                    if (datetime.now(timezone.utc) - last_updated) > timedelta(hours=6):
-                        data_needs_update = True
-                        print(f"{filename} is older than 6 hours. Fetching new data...")
-                    else:
-                        print(f"{filename} is up to date. No need to fetch new data.")
-                    # Load existing videos
-                    existing_videos = data.get('videos', [])
-                    existing_video_ids = set(video['id'] for video in existing_videos)
-                else:
-                    data_needs_update = True
-                    print(f"'lastUpdated' timestamp not found in {filename}. Fetching new data...")
+                # Load existing videos
+                existing_videos = data.get('videos', [])
+                existing_video_ids = set(video['id'] for video in existing_videos)
             else:
-                data_needs_update = True
                 print(f"{filename} has an unexpected format. Fetching new data...")
         except (json.JSONDecodeError, ValueError):
-            data_needs_update = True
             print(f"Error reading {filename}. It may be corrupt. Fetching new data...")
     else:
-        data_needs_update = True
         print(f"{filename} does not exist. Fetching new data...")
 
-    if data_needs_update:
-        # Fetch new videos and update
-        updated_videos = fetch_videos_from_youtube(existing_video_ids, existing_videos, filename)
-        # Print a success message
-        print(f"Video data has been updated and saved to {filename}.")
+    # Fetch new videos and update
+    updated_videos = fetch_videos_from_youtube(existing_video_ids, existing_videos, filename)
+    # Print a success message
+    print(f"Video data has been updated and saved to {filename}.")
 
 
 if __name__ == "__main__":
