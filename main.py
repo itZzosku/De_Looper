@@ -2,7 +2,7 @@ import subprocess
 import os
 import json
 import signal
-import sys  # To handle command-line arguments
+import sys
 import irc.client  # For sending messages to Twitch chat
 
 # Global variables for processes
@@ -14,14 +14,14 @@ config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.j
 with open(config_file, 'r', encoding='utf-8') as f:
     config_data = json.load(f)
     Twitch_Stream_Key = config_data.get("Twitch_Stream_Key")
-    Twitch_OAuth_Token = config_data.get("Twitch_OAuth_Token")  # Add your OAuth token here
-    Twitch_Nick = config_data.get("Twitch_Nick")  # Add your Twitch username here
-    Twitch_Channel = config_data.get("Twitch_Channel")  # Add your Twitch channel name here
+    Twitch_OAuth_Token = config_data.get("Twitch_OAuth_Token")
+    Twitch_Nick = config_data.get("Twitch_Nick")
+    Twitch_Channel = config_data.get("Twitch_Channel")
 
 Twitch_URL = f"rtmp://live.twitch.tv/app/{Twitch_Stream_Key}"
 
-# Define the path to playlist.json and progress.json (in the same folder as main.py)
-script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory where the script is located
+# Define the path to playlist.json and progress.json
+script_dir = os.path.dirname(os.path.abspath(__file__))
 playlist_json = os.path.join(script_dir, "playlist.json")
 progress_json = os.path.join(script_dir, "progress.json")
 
@@ -30,20 +30,20 @@ stream_command = [
     "ffmpeg",
     "-loglevel", "error",  # Only show errors
     "-re",  # Ensure real-time streaming
-    "-i", "pipe:0",  # Read from stdin (pipe from normalization FFmpeg process or file stream)
+    "-i", "pipe:0",  # Read from stdin
     "-c:v", "libx264",  # Encode video to H.264
     "-c:a", "aac",  # Encode audio to AAC
     "-ar", "44100",  # Audio sample rate
-    "-b:v", "2300k",  # Set video bitrate to 2300k to match normalization
-    "-maxrate", "2300k",  # Max bitrate set to 2300k to align with clip encoding
-    "-g", "60",  # Keyframe interval (for 30fps, keyframe every 2 seconds)
-    "-flvflags", "no_duration_filesize",  # Helps avoid certain FLV-specific issues
+    "-b:v", "2300k",  # Set video bitrate to 2300k
+    "-maxrate", "2300k",
+    "-g", "60",  # Keyframe interval
+    "-flvflags", "no_duration_filesize",
     "-f", "flv",  # Output format for Twitch
-    Twitch_URL  # Streaming URL for Twitch
+    Twitch_URL
 ]
 
 
-# Function to send a message to Twitch chat using the broadcasting account
+# Function to send a message to Twitch chat
 def send_message_to_chat(message):
     client = irc.client.Reactor()
     try:
@@ -58,43 +58,36 @@ def send_message_to_chat(message):
         print(f"Sent message to Twitch chat: {message}")
 
     c.add_global_handler("welcome", on_connect)
-    client.process_once(0.5)  # Process the connection
+    client.process_once(0.5)
 
 
 # Function to play a 3-second black screen transition
 def play_transition():
-    # Play a 3-second black screen transition with silent audio
-    print("Playing 3-second black screen transition with silent audio between clips...")
-
-    # FFmpeg command to generate a black screen (3 seconds, 1280x720 resolution) with silent audio
     ffmpeg_command = [
         "ffmpeg",
-        "-f", "lavfi",  # Use lavfi to generate video and audio
-        "-loglevel", "error",  # Only show errors
-        "-i", "color=c=black:s=1280x720:r=30:d=3",  # Black screen, 1280x720 resolution, 3 seconds long
-        "-f", "lavfi",  # Generate silent audio
-        "-i", "anullsrc=r=44100:cl=stereo",  # Generate silent audio at 44.1kHz, stereo
-        "-c:v", "libx264",  # Encode video to H.264
-        "-c:a", "aac",  # Encode audio to AAC
-        "-ar", "44100",  # Audio sample rate
-        "-t", "3",  # Duration of the transition (3 seconds)
-        "-f", "mpegts",  # Output format for Twitch
-        "-"  # Pipe output to stdout
+        "-f", "lavfi",
+        "-loglevel", "error",
+        "-i", "color=c=black:s=1280x720:r=30:d=3",
+        "-f", "lavfi",
+        "-i", "anullsrc=r=44100:cl=stereo",
+        "-c:v", "libx264",
+        "-c:a", "aac",
+        "-ar", "44100",
+        "-t", "3",
+        "-f", "mpegts",
+        "-"
     ]
 
-    # Play the black screen with silent audio and pipe it into the stream
     transition_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
-
     while True:
         data = transition_proc.stdout.read(65536)
-        if not data:  # Break when done playing the transition
+        if not data:
             break
-        stream_proc.stdin.write(data)  # Pipe black screen and silent audio data to the stream
-
+        stream_proc.stdin.write(data)
     transition_proc.wait()
 
 
-# Function to read playlist from the JSON file with UTF-8 encoding (for special characters)
+# Function to read playlist from the JSON file with UTF-8 encoding
 def get_media_files_from_playlist(json_file):
     with open(json_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -105,8 +98,8 @@ def get_media_files_from_playlist(json_file):
 def save_progress(last_id):
     with open(progress_json, 'w', encoding='utf-8') as f:
         json.dump({"last_played_id": last_id}, f)
-        f.flush()  # Ensure buffered data is written to disk
-        os.fsync(f.fileno())  # Sync the file with the disk to ensure it's written
+        f.flush()
+        os.fsync(f.fileno())
     print(f"Progress saved. Last played video id: {last_id}.")
 
 
@@ -115,10 +108,10 @@ def load_progress():
     if os.path.exists(progress_json):
         with open(progress_json, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        last_played_id = data.get("last_played_id", None)  # Get last played id
+        last_played_id = data.get("last_played_id", None)
         if last_played_id is not None:
-            return last_played_id + 1  # Start from the next video (last_played_id + 1)
-    return None  # If no progress is found, start from the first video
+            return last_played_id + 1
+    return None
 
 
 # Graceful shutdown function
@@ -126,14 +119,12 @@ def graceful_shutdown(signum, frame):
     global stream_proc, normalize_proc
     print("Shutting down...")
 
-    # Check and terminate the normalization process, if it exists
-    if normalize_proc and normalize_proc.poll() is None:  # Check if the process is running
-        normalize_proc.terminate()  # Stop the first FFmpeg process
+    if normalize_proc and normalize_proc.poll() is None:
+        normalize_proc.terminate()
 
-    # Check and terminate the stream process, if it exists
-    if stream_proc and stream_proc.poll() is None:  # Check if the process is running
-        stream_proc.stdin.close()  # Close the pipe to stop the streaming process
-        stream_proc.terminate()  # Terminate the streaming FFmpeg process
+    if stream_proc and stream_proc.poll() is None:
+        stream_proc.stdin.close()
+        stream_proc.terminate()
 
 
 # Register the shutdown handler
@@ -146,77 +137,80 @@ def pipe_to_stream(media_file, is_preprocessed):
     global stream_proc, normalize_proc
 
     if is_preprocessed:
-        # Pipe preprocessed file to the streaming FFmpeg instance without re-encoding
-        print(f"Streaming preprocessed file (no re-encoding): {media_file}")
-
-        # FFmpeg command to just copy streams and pipe to Twitch (no encoding)
+        print(f"Streaming preprocessed file: {media_file}")
         ffmpeg_command = [
             "ffmpeg",
-            "-loglevel", "error",  # Only show errors
-            "-re",  # Ensure real-time streaming
-            "-i", media_file,  # Input the preprocessed file
-            "-c", "copy",  # Copy the video and audio without re-encoding
-            "-f", "mpegts",  # Output format to pipe to Twitch
-            "-"  # Pipe output to stdout
+            "-loglevel", "error",
+            "-re",
+            "-i", media_file,
+            "-c", "copy",
+            "-f", "mpegts",
+            "-"
         ]
-
     else:
-        # Normalize and pipe the video to the streaming FFmpeg instance
         print(f"Normalizing and streaming: {media_file}")
-
-        # FFmpeg command to normalize the video and pipe it to stdout (H.264 and AAC)
         ffmpeg_command = [
             "ffmpeg",
-            "-loglevel", "error",  # Only show errors
-            "-i", media_file,  # Input video file
-            "-s", "1280x720",  # Scale video to 720p
-            "-c:v", "libx264",  # Video codec H.264
-            "-b:v", "2300k",  # Reduce video bitrate
-            "-g", "60",  # Keyframe interval
-            "-r", "30",  # Frame rate
-            "-c:a", "aac",  # Audio codec AAC
-            "-ar", "44100",  # Audio sample rate
-            "-f", "mpegts",  # Output format (MPEG-TS)
-            "-"  # Pipe output to stdout
+            "-loglevel", "error",
+            "-i", media_file,
+            "-s", "1280x720",
+            "-c:v", "libx264",
+            "-b:v", "2300k",
+            "-g", "60",
+            "-r", "30",
+            "-c:a", "aac",
+            "-ar", "44100",
+            "-f", "mpegts",
+            "-"
         ]
 
-    # Start the normalization/preprocessing process and pipe its output to the streaming process
     normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
-
-    # Pipe data from the normalization/preprocessed process to the stream continuously
     while True:
         data = normalize_proc.stdout.read(65536)
-        if not data:  # If no data, break the loop
+        if not data:
             break
-        stream_proc.stdin.write(data)  # Write normalized data to the streaming process
-
+        stream_proc.stdin.write(data)
     normalize_proc.wait()
 
 
-# Function to start streaming the videos and post to chat
-def normalize_and_stream(media_files, last_played_id=None):
+# Function to stream media files and recheck playlist between clips
+def stream_and_recheck_playlist(last_played_id=None):
     global stream_proc
 
-    print("Starting streaming process...")
     stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
 
-    start_index = 0
-    if last_played_id is not None:
-        for i, media in enumerate(media_files):
-            if media['id'] == last_played_id:
-                start_index = i  # Start from the requested video
-                break
+    played_ids = set()  # To track the IDs that have been played
 
     while True:
+        # Reload playlist before starting a new clip
+        media_files = get_media_files_from_playlist(playlist_json)
+
+        if not media_files:
+            print("No media files found in playlist!")
+            return
+
+        start_index = 0
+        if last_played_id is not None:
+            for i, media in enumerate(media_files):
+                if media['id'] == last_played_id:
+                    start_index = i
+                    break
+
         idx = start_index
         while idx < len(media_files):
             media = media_files[idx]
             media_file = media.get('file_path')
             media_id = media.get('id')
-            media_title = media.get('name', 'Untitled')  # Get the title from the playlist
-            media_release_date = media.get('release_date', 'Unknown')  # Get the release date
+            media_title = media.get('name', 'Untitled')
+            media_release_date = media.get('release_date', 'Unknown')
 
-            # Send a message to Twitch chat with the video title and release date
+            if media_id in played_ids:
+                # Skip videos that have already been played
+                idx += 1
+                continue
+
+            played_ids.add(media_id)  # Mark this video as played
+
             message = f"Nyt toistetaan: {media_title} (Julkaisupäivä: {media_release_date})"
             send_message_to_chat(message)
 
@@ -229,8 +223,8 @@ def normalize_and_stream(media_files, last_played_id=None):
             play_transition()
             idx += 1
 
-        print("Reached the end of the playlist. Restarting from the beginning.")
-        start_index = 0
+        print("Reached the end of the playlist. Rechecking for new clips...")
+        last_played_id = None  # Reset to start from the first video on the next loop
 
 
 # Main function to run the whole process
@@ -246,12 +240,6 @@ def main():
         start_id = None
 
     print(f"Using playlist: {playlist_json}")
-    media_files = get_media_files_from_playlist(playlist_json)
-
-    if not media_files:
-        print("No media files found in playlist!")
-        return
-
     last_played_id = start_id if start_id else load_progress()
 
     if last_played_id:
@@ -259,7 +247,7 @@ def main():
     else:
         print("Starting from the first video.")
 
-    normalize_and_stream(media_files, last_played_id=last_played_id)
+    stream_and_recheck_playlist(last_played_id=last_played_id)
 
 
 if __name__ == "__main__":
