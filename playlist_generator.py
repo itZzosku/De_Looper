@@ -86,46 +86,108 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     output_json = os.path.join(script_dir, "playlist.json")
 
-    # Create the JSON structure with 'playlist'
+    # Initialize variables
     playlist = {
         "playlist": []
     }
-
-    # Initialize a variable to hold the total duration in seconds
     total_duration = 0
     file_id = 1  # Start file ID from 1
 
-    # Go through each folder in the list
+    # Check if playlist.json exists
+    if os.path.exists(output_json):
+        try:
+            with open(output_json, 'r', encoding='utf-8') as json_file:
+                existing_data = json.load(json_file)
+
+            # Build a set of existing file paths from the playlist
+            existing_file_paths = set(entry['file_path'] for entry in existing_data.get('playlist', []))
+
+            # Build a set of current file paths from the video folders
+            current_file_paths = set()
+            for video_folder in video_folders:
+                video_files = [f for f in os.listdir(video_folder) if f.endswith('.mp4')]
+                for video_file in video_files:
+                    file_path = os.path.join(video_folder, video_file)
+                    current_file_paths.add(file_path)
+
+            # Check for missing files
+            missing_files = existing_file_paths - current_file_paths
+            new_files = current_file_paths - existing_file_paths
+
+            if missing_files:
+                print("Some files in playlist.json are missing from the folders.")
+                print("Regenerating playlist.json from scratch.")
+                regenerate_playlist = True
+            else:
+                print("No missing files detected. Updating playlist.json with new videos.")
+                regenerate_playlist = False
+                # Load existing playlist
+                playlist = existing_data
+                # Calculate total duration from existing entries
+                total_duration = sum(entry['duration'] for entry in playlist.get('playlist', []))
+                # Update file_id to continue from the last ID
+                if playlist['playlist']:
+                    file_id = max(entry['id'] for entry in playlist['playlist']) + 1
+                else:
+                    file_id = 1
+        except Exception as e:
+            print(f"Error reading existing playlist.json: {e}")
+            print("Regenerating playlist.json from scratch.")
+            regenerate_playlist = True
+    else:
+        print("playlist.json does not exist. Creating a new one.")
+        regenerate_playlist = True
+
+    if regenerate_playlist:
+        # Start fresh
+        playlist = {
+            "playlist": []
+        }
+        total_duration = 0
+        file_id = 1
+        new_files = set()  # Process all files as new
+
+        # Build a set of current file paths from the video folders
+        for video_folder in video_folders:
+            video_files = [f for f in os.listdir(video_folder) if f.endswith('.mp4')]
+            for video_file in video_files:
+                file_path = os.path.join(video_folder, video_file)
+                new_files.add(file_path)
+
+    # Process new files
     for video_folder in video_folders:
-        # List all video files in the current folder
         video_files = sorted([f for f in os.listdir(video_folder) if f.endswith('.mp4')])
 
-        # Scan the folder for video files and generate playlist entries
-        for index, video_file in enumerate(video_files):
+        for video_file in video_files:
             file_path = os.path.join(video_folder, video_file)
-            duration = get_video_duration(file_path)
-            total_duration += duration  # Add each clip's duration to total
 
-            # Extract release date, time, and video name from the filename
-            release_date, release_time = extract_release_data(video_file)
-            video_name = extract_video_name(video_file)
+            if file_path in new_files:
+                duration = get_video_duration(file_path)
+                total_duration += duration  # Add each clip's duration to total
 
-            entry = {
-                "id": file_id,  # Use a global file_id for unique IDs
-                "name": video_name,
-                "file_path": file_path,
-                "duration": duration,
-                "release_date": release_date,
-                "release_time": release_time
-            }
-            playlist["playlist"].append(entry)
+                # Extract release date, time, and video name from the filename
+                release_date, release_time = extract_release_data(video_file)
+                video_name = extract_video_name(video_file)
 
-            # Print progress
-            print(f"Processing file {file_id}: {video_file}")
+                entry = {
+                    "id": file_id,  # Use a global file_id for unique IDs
+                    "name": video_name,
+                    "file_path": file_path,
+                    "duration": duration,
+                    "release_date": release_date,
+                    "release_time": release_time
+                }
+                playlist["playlist"].append(entry)
 
-            file_id += 1  # Increment the file ID after each file
+                # Print progress
+                print(f"Processing new file {file_id}: {video_file}")
 
-    # Add total video duration in hours, minutes, and seconds to the playlist
+                file_id += 1  # Increment the file ID after each file
+
+    # Update total_duration in the playlist
+    if not regenerate_playlist:
+        # If appending, recalculate total_duration
+        total_duration = sum(entry['duration'] for entry in playlist.get('playlist', []))
     playlist["total_duration"] = format_duration(total_duration)
 
     # Write the JSON to the output file with UTF-8 encoding and ensure_ascii=False
