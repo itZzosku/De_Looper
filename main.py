@@ -48,15 +48,17 @@ stream_command = [
 
 # Function to send a message to Twitch chat
 def send_message_to_chat(message):
-    # Using socket to connect to Twitch IRC
-    s = socket.socket()
-    s.connect(('irc.chat.twitch.tv', 6667))
-    s.send(f"PASS {Twitch_OAuth_Token}\r\n".encode('utf-8'))
-    s.send(f"NICK {Twitch_Nick}\r\n".encode('utf-8'))
-    s.send(f"JOIN #{Twitch_Channel}\r\n".encode('utf-8'))
-    s.send(f"PRIVMSG #{Twitch_Channel} :{message}\r\n".encode('utf-8'))
-    s.close()
-    print(f"Sent message to Twitch chat: {message}")
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect(('irc.chat.twitch.tv', 6667))
+        s.send(f"PASS {Twitch_OAuth_Token}\r\n".encode('utf-8'))
+        s.send(f"NICK {Twitch_Nick}\r\n".encode('utf-8'))
+        s.send(f"JOIN #{Twitch_Channel}\r\n".encode('utf-8'))
+        s.send(f"PRIVMSG #{Twitch_Channel} :{message}\r\n".encode('utf-8'))
+        s.close()
+        print(f"Sent message to Twitch chat: {message}")
+    except Exception as e:
+        print(f"Error sending message to Twitch chat: {e}")
 
 
 # Function to play a 3-second black screen transition
@@ -153,12 +155,26 @@ def graceful_shutdown(signum, frame):
 
     if normalize_proc and normalize_proc.poll() is None:
         normalize_proc.terminate()
-        normalize_proc.wait()
+        try:
+            normalize_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            print("normalize_proc did not terminate in time. Killing it.")
+            normalize_proc.kill()
+            normalize_proc.wait()
 
     if stream_proc and stream_proc.poll() is None:
-        stream_proc.stdin.close()
+        if stream_proc.stdin:
+            try:
+                stream_proc.stdin.close()
+            except Exception as e:
+                print(f"Error closing stream_proc.stdin: {e}")
         stream_proc.terminate()
-        stream_proc.wait()
+        try:
+            stream_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            print("stream_proc did not terminate in time. Killing it.")
+            stream_proc.kill()
+            stream_proc.wait()
 
     sys.exit(0)
 
@@ -170,8 +186,8 @@ signal.signal(signal.SIGTERM, graceful_shutdown)
 
 # Monitor chat for skip votes and trigger skip event when threshold is met
 def monitor_chat(skip_event):
-    s = socket.socket()
     try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect(('irc.chat.twitch.tv', 6667))
         s.send(f"PASS {Twitch_OAuth_Token}\r\n".encode('utf-8'))
         s.send(f"NICK {Twitch_Nick}\r\n".encode('utf-8'))
@@ -184,15 +200,22 @@ def monitor_chat(skip_event):
     skip_votes = set()
     skip_threshold = 3
 
+    buffer = ""
     while True:
         try:
             response = s.recv(2048).decode('utf-8')
-            if response.startswith('PING'):
-                s.send("PONG\r\n".encode('utf-8'))
-                continue
+            if not response:
+                print("Disconnected from Twitch IRC.")
+                break
 
-            # Split the response into lines
-            for line in response.strip().split('\r\n'):
+            buffer += response
+            while '\r\n' in buffer:
+                line, buffer = buffer.split('\r\n', 1)
+                if line.startswith('PING'):
+                    s.send("PONG\r\n".encode('utf-8'))
+                    continue
+
+                # Parse the IRC message
                 parts = line.split(' ')
                 if len(parts) < 4:
                     continue
@@ -259,6 +282,7 @@ def pipe_to_stream(media_file, is_preprocessed):
 
     # Start FFmpeg to process the media file
     normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    print(f"Started normalize_proc with PID: {normalize_proc.pid}")
 
     try:
         while True:
@@ -271,15 +295,30 @@ def pipe_to_stream(media_file, is_preprocessed):
 
             # Write the data to stream_proc stdin (continuous streaming)
             if stream_proc and stream_proc.stdin and stream_proc.poll() is None:
-                stream_proc.stdin.write(data)
+                try:
+                    stream_proc.stdin.write(data)
+                except (BrokenPipeError, ValueError) as e:
+                    print(f"Error writing to stream_proc.stdin: {e}")
+                    break
             else:
                 print("Stream process was closed during media playback.")
                 break
 
+    except Exception as e:
+        print(f"An error occurred in pipe_to_stream: {e}")
+        import traceback
+        traceback.print_exc()
+
     finally:
         if normalize_proc and normalize_proc.poll() is None:
+            print("Terminating normalize_proc...")
             normalize_proc.terminate()
-            normalize_proc.wait()
+            try:
+                normalize_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                print("normalize_proc did not terminate in time. Killing it.")
+                normalize_proc.kill()
+                normalize_proc.wait()
 
         # Flush but don't close stream_proc to keep it running
         if stream_proc and stream_proc.stdin:
@@ -297,53 +336,64 @@ def stream_and_recheck_playlist(last_played_id=None):
     if stream_proc is None or stream_proc.poll() is not None:
         print("Starting stream process.")
         stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
+        print(f"Started stream_proc with PID: {stream_proc.pid}")
 
     played_ids = set()  # To track the IDs that have been played
 
     while True:
-        # Reload playlist before starting a new clip
-        media_files = get_media_files_from_playlist(playlist_json)
+        try:
+            # Reload playlist before starting a new clip
+            media_files = get_media_files_from_playlist(playlist_json)
 
-        if not media_files:
-            print("No media files found in playlist!")
-            return
+            if not media_files:
+                print("No media files found in playlist!")
+                return
 
-        start_index = 0
-        if last_played_id is not None:
-            for i, media in enumerate(media_files):
-                if media['id'] == last_played_id:
-                    start_index = i
-                    break
+            start_index = 0
+            if last_played_id is not None:
+                for i, media in enumerate(media_files):
+                    if media['id'] == last_played_id:
+                        start_index = i
+                        break
 
-        idx = start_index
-        while idx < len(media_files):
-            media = media_files[idx]
-            media_file = media.get('file_path')
-            media_id = media.get('id')
-            media_title = media.get('name', 'Untitled')
-            media_release_date = media.get('release_date', 'Unknown')
+            idx = start_index
+            while idx < len(media_files):
+                media = media_files[idx]
+                media_file = media.get('file_path')
+                media_id = media.get('id')
+                media_title = media.get('name', 'Untitled')
+                media_release_date = media.get('release_date', 'Unknown')
 
-            if media_id in played_ids:
-                # Skip videos that have already been played
+                if media_id in played_ids:
+                    # Skip videos that have already been played
+                    idx += 1
+                    continue
+
+                played_ids.add(media_id)  # Mark this video as played
+
+                print(f"Starting playback of media ID {media_id}: {media_title}")
+                message = f"Nyt toistetaan: {media_title} (Julkaisupäivä: {media_release_date})"
+                send_message_to_chat(message)
+
+                if "_processed.mp4" in media_file and os.path.exists(media_file):
+                    pipe_to_stream(media_file, is_preprocessed=True)
+                else:
+                    pipe_to_stream(media_file, is_preprocessed=False)
+
+                save_progress(media_id)
+                play_transition()  # Ensure the transition plays between videos
+                print(f"Finished processing media ID {media_id}. Moving to the next clip.")
                 idx += 1
-                continue
 
-            played_ids.add(media_id)  # Mark this video as played
+            print("Reached the end of the playlist. Rechecking for new clips...")
+            last_played_id = None  # Reset to start from the first video on the next loop
 
-            message = f"Nyt toistetaan: {media_title} (Julkaisupäivä: {media_release_date})"
-            send_message_to_chat(message)
-
-            if "_processed.mp4" in media_file and os.path.exists(media_file):
-                pipe_to_stream(media_file, is_preprocessed=True)
-            else:
-                pipe_to_stream(media_file, is_preprocessed=False)
-
-            save_progress(media_id)
-            play_transition()  # Ensure the transition plays between videos
-            idx += 1
-
-        print("Reached the end of the playlist. Rechecking for new clips...")
-        last_played_id = None  # Reset to start from the first video on the next loop
+        except Exception as e:
+            print(f"An error occurred in stream_and_recheck_playlist: {e}")
+            import traceback
+            traceback.print_exc()
+            # Decide whether to break or continue based on the exception
+            break
 
 
 # Main function to run the whole process
