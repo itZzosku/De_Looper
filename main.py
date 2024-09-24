@@ -6,8 +6,6 @@ import sys
 import irc.client  # For sending messages to Twitch chat
 import threading
 
-# stable
-
 # Global variables for processes
 stream_proc = None
 normalize_proc = None  # Ensure both are initialized at the module level
@@ -69,6 +67,13 @@ def send_message_to_chat(message):
 
 # Function to play a 3-second black screen transition
 def play_transition():
+    global stream_proc
+
+    # Ensure stream_proc is still valid and running before playing the transition
+    if stream_proc is None or stream_proc.poll() is not None:
+        print("Stream process is not running. Transition cannot be played.")
+        return
+
     ffmpeg_command = [
         "ffmpeg",
         "-f", "lavfi",
@@ -84,13 +89,30 @@ def play_transition():
         "-"
     ]
 
+    # Start the transition process
     transition_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
-    while True:
-        data = transition_proc.stdout.read(65536)
-        if not data:
-            break
-        stream_proc.stdin.write(data)
-    transition_proc.wait()
+
+    try:
+        while True:
+            data = transition_proc.stdout.read(65536)
+            if not data:
+                break
+
+            # Check if stream_proc is still running before writing to stdin
+            if stream_proc and stream_proc.stdin and stream_proc.poll() is None:
+                stream_proc.stdin.write(data)
+            else:
+                print("Stream process was closed during transition.")
+                break
+
+    finally:
+        transition_proc.wait()
+
+        if stream_proc and stream_proc.stdin:
+            try:
+                stream_proc.stdin.flush()  # Ensure any remaining data is flushed
+            except BrokenPipeError:
+                print("Broken pipe when flushing stream after transition.")
 
 
 # Function to read playlist from the JSON file with UTF-8 encoding
@@ -127,10 +149,14 @@ def graceful_shutdown(signum, frame):
 
     if normalize_proc and normalize_proc.poll() is None:
         normalize_proc.terminate()
+        normalize_proc.wait()
 
     if stream_proc and stream_proc.poll() is None:
         stream_proc.stdin.close()
         stream_proc.terminate()
+        stream_proc.wait()
+
+    sys.exit(0)
 
 
 # Register the shutdown handler
@@ -222,18 +248,31 @@ def pipe_to_stream(media_file, is_preprocessed):
                     print("Skip event detected. Terminating current clip.")
                     skip_event.clear()  # Reset the skip event
                 break
-            stream_proc.stdin.write(data)
+
+            # Check if stream_proc is still valid and running before writing to stdin
+            if stream_proc and stream_proc.stdin and stream_proc.poll() is None:
+                stream_proc.stdin.write(data)
+            else:
+                print("Stream process was closed while streaming media.")
+                break
 
     finally:
-        if normalize_proc.poll() is None:
+        if normalize_proc and normalize_proc.poll() is None:
             normalize_proc.terminate()
             normalize_proc.wait()
+
+        if stream_proc and stream_proc.stdin:
+            try:
+                stream_proc.stdin.flush()
+            except BrokenPipeError:
+                print("Broken pipe when flushing stream after media playback.")
 
 
 # Function to stream media files and recheck playlist between clips
 def stream_and_recheck_playlist(last_played_id=None):
     global stream_proc
 
+    # Start the streaming process
     stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
 
     played_ids = set()  # To track the IDs that have been played
@@ -277,7 +316,7 @@ def stream_and_recheck_playlist(last_played_id=None):
                 pipe_to_stream(media_file, is_preprocessed=False)
 
             save_progress(media_id)
-            play_transition()
+            play_transition()  # Ensure the transition plays between videos
             idx += 1
 
         print("Reached the end of the playlist. Rechecking for new clips...")
