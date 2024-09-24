@@ -6,6 +6,8 @@ import sys
 import threading
 import socket  # For connecting to Twitch IRC chat
 
+# Stable 25/09/2024
+
 # Global variables for processes
 stream_proc = None
 normalize_proc = None
