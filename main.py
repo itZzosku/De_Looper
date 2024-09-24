@@ -3,12 +3,12 @@ import os
 import json
 import signal
 import sys
-import irc.client  # For sending messages to Twitch chat
 import threading
+import socket  # For connecting to Twitch IRC chat
 
 # Global variables for processes
 stream_proc = None
-normalize_proc = None  # Ensure both are initialized at the module level
+normalize_proc = None
 skip_event = threading.Event()  # Event to signal skipping the current clip
 
 # Twitch configuration for streaming and chat
@@ -20,7 +20,6 @@ with open(config_file, 'r', encoding='utf-8') as f:
     Twitch_Nick = config_data.get("Twitch_Nick")
     Twitch_Channel = config_data.get("Twitch_Channel")
     Instant_Skip_Users = config_data.get("Instant_Skip_Users", [])  # Load Instant_Skip_Users list
-
 
 Twitch_URL = f"rtmp://live.twitch.tv/app/{Twitch_Stream_Key}"
 
@@ -49,20 +48,15 @@ stream_command = [
 
 # Function to send a message to Twitch chat
 def send_message_to_chat(message):
-    client = irc.client.Reactor()
-    try:
-        c = client.server().connect("irc.chat.twitch.tv", 6667, Twitch_Nick, Twitch_OAuth_Token)
-    except irc.client.ServerConnectionError as e:
-        print(f"Error connecting to Twitch chat: {e}")
-        return
-
-    def on_connect(connection, event):
-        connection.join(f"#{Twitch_Channel}")
-        connection.privmsg(f"#{Twitch_Channel}", message)
-        print(f"Sent message to Twitch chat: {message}")
-
-    c.add_global_handler("welcome", on_connect)
-    client.process_once(0.5)
+    # Using socket to connect to Twitch IRC
+    s = socket.socket()
+    s.connect(('irc.chat.twitch.tv', 6667))
+    s.send(f"PASS {Twitch_OAuth_Token}\r\n".encode('utf-8'))
+    s.send(f"NICK {Twitch_Nick}\r\n".encode('utf-8'))
+    s.send(f"JOIN #{Twitch_Channel}\r\n".encode('utf-8'))
+    s.send(f"PRIVMSG #{Twitch_Channel} :{message}\r\n".encode('utf-8'))
+    s.close()
+    print(f"Sent message to Twitch chat: {message}")
 
 
 # Function to play a 3-second black screen transition
@@ -176,42 +170,59 @@ signal.signal(signal.SIGTERM, graceful_shutdown)
 
 # Monitor chat for skip votes and trigger skip event when threshold is met
 def monitor_chat(skip_event):
-    client = irc.client.Reactor()
+    s = socket.socket()
+    try:
+        s.connect(('irc.chat.twitch.tv', 6667))
+        s.send(f"PASS {Twitch_OAuth_Token}\r\n".encode('utf-8'))
+        s.send(f"NICK {Twitch_Nick}\r\n".encode('utf-8'))
+        s.send(f"JOIN #{Twitch_Channel}\r\n".encode('utf-8'))
+        print("Connected to Twitch IRC.")
+    except Exception as e:
+        print(f"Error connecting to Twitch IRC: {e}")
+        return
+
     skip_votes = set()
     skip_threshold = 3
 
-    try:
-        c = client.server().connect("irc.chat.twitch.tv", 6667, Twitch_Nick, Twitch_OAuth_Token)
-    except irc.client.ServerConnectionError as e:
-        print(f"Error connecting to Twitch chat: {e}")
-        return
-
-    def on_pubmsg(connection, event):
-        username = event.source.nick.lower()
-        message = event.arguments[0].strip().lower()
-
-        if message == "!skip":
-            if username in [user.lower() for user in Instant_Skip_Users]:
-                print(f"{username} is an instant skip user. Skipping immediately.")
-                skip_event.set()  # Trigger skip
-                send_message_to_chat(f"{username} skipped the current clip!")
-            else:
-                if username not in skip_votes:
-                    skip_votes.add(username)
-                    print(f"{username} voted to skip. Total votes: {len(skip_votes)}")
-
-                if len(skip_votes) >= skip_threshold:
-                    print(f"Skip threshold reached with {len(skip_votes)} votes. Skipping the clip.")
-                    skip_event.set()
-                    send_message_to_chat(f"Skip threshold reached with {len(skip_votes)} votes! Skipping the current clip.")
-                    skip_votes.clear()
-
-    c.add_global_handler("pubmsg", on_pubmsg)
-    c.join(f"#{Twitch_Channel}")
-
     while True:
-        client.process_once(0.2)
+        try:
+            response = s.recv(2048).decode('utf-8')
+            if response.startswith('PING'):
+                s.send("PONG\r\n".encode('utf-8'))
+                continue
 
+            # Split the response into lines
+            for line in response.strip().split('\r\n'):
+                parts = line.split(' ')
+                if len(parts) < 4:
+                    continue
+
+                if parts[1] == 'PRIVMSG':
+                    username = parts[0].split('!')[0][1:]
+                    channel = parts[2]
+                    message = ' '.join(parts[3:])[1:]
+
+                    # Handle the skip command
+                    if message.strip().lower() == '!skip':
+                        username = username.lower()
+                        if username in [user.lower() for user in Instant_Skip_Users]:
+                            print(f"{username} is an instant skip user. Skipping immediately.")
+                            skip_event.set()  # Trigger skip
+                            send_message_to_chat(f"{username} skipped the current clip!")
+                        else:
+                            if username not in skip_votes:
+                                skip_votes.add(username)
+                                print(f"{username} voted to skip. Total votes: {len(skip_votes)}")
+
+                            if len(skip_votes) >= skip_threshold:
+                                print(f"Skip threshold reached with {len(skip_votes)} votes. Skipping the clip.")
+                                skip_event.set()
+                                send_message_to_chat(
+                                    f"Skip threshold reached with {len(skip_votes)} votes! Skipping the current clip.")
+                                skip_votes.clear()
+        except Exception as e:
+            print(f"Error in monitor_chat: {e}")
+            continue
 
 
 # Function to pipe media to the streaming FFmpeg instance
@@ -247,7 +258,7 @@ def pipe_to_stream(media_file, is_preprocessed):
         ]
 
     # Start FFmpeg to process the media file
-    normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
+    normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     try:
         while True:
@@ -356,6 +367,7 @@ def main():
         print("Starting from the first video.")
 
     # Start the chat monitoring thread
+    print("Starting chat monitoring thread.")
     chat_thread = threading.Thread(target=monitor_chat, args=(skip_event,))
     chat_thread.daemon = True  # Ensures the thread will exit when the main program exits
     chat_thread.start()
