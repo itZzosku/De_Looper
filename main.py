@@ -6,6 +6,10 @@ import sys
 import irc.client  # For sending messages to Twitch chat
 import threading
 
+
+print(os.environ)
+
+
 # Global variables for processes
 stream_proc = None
 normalize_proc = None  # Ensure both are initialized at the module level
@@ -210,7 +214,10 @@ def pipe_to_stream(media_file, is_preprocessed):
             "-"
         ]
 
-    normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
+    normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = normalize_proc.communicate()
+    if stderr:
+        print(f"FFmpeg Error: {stderr.decode('utf-8')}")
 
     try:
         while True:
