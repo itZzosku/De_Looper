@@ -205,8 +205,6 @@ def monitor_chat(skip_event, vote_threshold=3):
 def pipe_to_stream(media_file, is_preprocessed):
     global stream_proc, normalize_proc, skip_event
 
-    skipped = False  # Flag to indicate if the clip was skipped
-
     if is_preprocessed:
         print(f"Streaming preprocessed file: {media_file}")
         ffmpeg_command = [
@@ -238,6 +236,7 @@ def pipe_to_stream(media_file, is_preprocessed):
 
     # Start normalize_proc
     normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
+
     try:
         while True:
             # Read data from normalize_proc
@@ -258,16 +257,17 @@ def pipe_to_stream(media_file, is_preprocessed):
                     normalize_proc.terminate()
                     normalize_proc.wait()
 
-                skipped = True  # Set the skipped flag
-                break  # Break out to proceed to the next clip
+                # Play transition
+                play_transition_to_stream()
+
+                # Break out to proceed to the next clip
+                break
 
     finally:
         # Ensure normalize_proc is terminated
         if normalize_proc.poll() is None:
             normalize_proc.terminate()
             normalize_proc.wait()
-
-    return skipped  # Return whether the clip was skipped
 
 
 # Function to stream media files and recheck playlist between clips
@@ -302,6 +302,7 @@ def stream_and_recheck_playlist(last_played_id=None):
             media_release_date = media.get('release_date', 'Unknown')
 
             if media_id in played_ids:
+                # Skip videos that have already been played
                 idx += 1
                 continue
 
@@ -310,18 +311,13 @@ def stream_and_recheck_playlist(last_played_id=None):
             message = f"Nyt toistetaan: {media_title} (Julkaisupäivä: {media_release_date})"
             send_message_to_chat(message)
 
-            # Stream the media file and get the skipped flag
             if "_processed.mp4" in media_file and os.path.exists(media_file):
-                skipped = pipe_to_stream(media_file, is_preprocessed=True)
+                pipe_to_stream(media_file, is_preprocessed=True)
             else:
-                skipped = pipe_to_stream(media_file, is_preprocessed=False)
+                pipe_to_stream(media_file, is_preprocessed=False)
 
             save_progress(media_id)
-
-            # Play transition only if the clip wasn't skipped
-            if not skipped:
-                play_transition_to_stream()
-
+            play_transition_to_stream()
             idx += 1
 
         print("Reached the end of the playlist. Rechecking for new clips...")
