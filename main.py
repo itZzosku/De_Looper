@@ -19,6 +19,8 @@ with open(config_file, 'r', encoding='utf-8') as f:
     Twitch_OAuth_Token = config_data.get("Twitch_OAuth_Token")
     Twitch_Nick = config_data.get("Twitch_Nick")
     Twitch_Channel = config_data.get("Twitch_Channel")
+    Instant_Skip_Users = config_data.get("Instant_Skip_Users", [])  # Load Instant_Skip_Users list
+
 
 Twitch_URL = f"rtmp://live.twitch.tv/app/{Twitch_Stream_Key}"
 
@@ -43,6 +45,7 @@ stream_command = [
     "-f", "flv",  # Output format for Twitch
     Twitch_URL
 ]
+
 
 # Function to send a message to Twitch chat
 def send_message_to_chat(message):
@@ -136,6 +139,8 @@ signal.signal(signal.SIGTERM, graceful_shutdown)
 # Function to monitor Twitch chat for skip votes
 def monitor_chat(skip_event):
     client = irc.client.Reactor()
+    skip_votes = set()  # Set to track unique users voting to skip
+    skip_threshold = 3  # Number of unique votes required to skip
 
     try:
         c = client.server().connect("irc.chat.twitch.tv", 6667, Twitch_Nick, Twitch_OAuth_Token)
@@ -144,12 +149,27 @@ def monitor_chat(skip_event):
         return
 
     def on_pubmsg(connection, event):
+        username = event.source.nick.lower()  # Convert the username from chat to lowercase
         message = event.arguments[0].strip().lower()
 
         if message == "!skip":
-            print("Received skip command from chat")
-            skip_event.set()  # Trigger skip event
-            send_message_to_chat("Skipping current clip!")
+            # Compare the username in a case-insensitive way
+            if username in [user.lower() for user in Instant_Skip_Users]:
+                print(f"{username} is an instant skip user. Skipping immediately.")
+                skip_event.set()  # Skip immediately for users in Instant_Skip_Users
+                send_message_to_chat(f"{username} skipped the current clip!")
+            else:
+                # Add the user to the set of voters if they haven't voted yet
+                if username not in skip_votes:
+                    skip_votes.add(username)
+                    print(f"{username} voted to skip. Total votes: {len(skip_votes)}")
+
+                # Check if the number of unique votes has reached the threshold
+                if len(skip_votes) >= skip_threshold:
+                    print(f"Skip threshold reached with {len(skip_votes)} votes. Skipping the clip.")
+                    skip_event.set()  # Trigger skip after reaching the vote threshold
+                    send_message_to_chat(f"Skip threshold reached with {len(skip_votes)} votes! Skipping the current clip.")
+                    skip_votes.clear()  # Reset the votes for the next clip
 
     c.add_global_handler("pubmsg", on_pubmsg)
     c.join(f"#{Twitch_Channel}")
