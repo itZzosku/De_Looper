@@ -4,10 +4,13 @@ import json
 import signal
 import sys
 import irc.client  # For sending messages to Twitch chat
+import threading
+import time
 
 # Global variables for processes
 stream_proc = None
-normalize_proc = None  # Ensure both are initialized at the module level
+normalize_proc = None
+skip_event = threading.Event()  # Event to signal skipping the current clip
 
 # Twitch configuration for streaming and chat
 config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -17,6 +20,14 @@ with open(config_file, 'r', encoding='utf-8') as f:
     Twitch_OAuth_Token = config_data.get("Twitch_OAuth_Token")
     Twitch_Nick = config_data.get("Twitch_Nick")
     Twitch_Channel = config_data.get("Twitch_Channel")
+    Instant_Skip_Users = config_data.get("Instant_Skip_Users", [])  # Get the list of instant skip users
+
+# Convert Instant_Skip_Users to lower case for case-insensitive comparison
+Instant_Skip_Users = [user.lower() for user in Instant_Skip_Users]
+
+# Add the streaming account to the list if not already present
+if Twitch_Nick.lower() not in Instant_Skip_Users:
+    Instant_Skip_Users.append(Twitch_Nick.lower())
 
 Twitch_URL = f"rtmp://live.twitch.tv/app/{Twitch_Stream_Key}"
 
@@ -61,8 +72,8 @@ def send_message_to_chat(message):
     client.process_once(0.5)
 
 
-# Function to play a 3-second black screen transition
-def play_transition():
+# Function to play a 3-second black screen transition to stream_proc
+def play_transition_to_stream():
     ffmpeg_command = [
         "ffmpeg",
         "-f", "lavfi",
@@ -71,11 +82,13 @@ def play_transition():
         "-f", "lavfi",
         "-i", "anullsrc=r=44100:cl=stereo",
         "-c:v", "libx264",
+        "-b:v", "2300k",
+        "-g", "60",
+        "-r", "30",
         "-c:a", "aac",
         "-ar", "44100",
-        "-t", "3",
         "-f", "mpegts",
-        "-"
+        "pipe:1"
     ]
 
     transition_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
@@ -116,15 +129,21 @@ def load_progress():
 
 # Graceful shutdown function
 def graceful_shutdown(signum, frame):
-    global stream_proc, normalize_proc
+    global stream_proc, normalize_proc, skip_event
     print("Shutting down...")
+
+    skip_event.set()  # Signal any waiting threads to proceed
 
     if normalize_proc and normalize_proc.poll() is None:
         normalize_proc.terminate()
+        normalize_proc.wait()
 
     if stream_proc and stream_proc.poll() is None:
         stream_proc.stdin.close()
         stream_proc.terminate()
+        stream_proc.wait()
+
+    sys.exit(0)  # Exit the program
 
 
 # Register the shutdown handler
@@ -132,9 +151,61 @@ signal.signal(signal.SIGINT, graceful_shutdown)
 signal.signal(signal.SIGTERM, graceful_shutdown)
 
 
+# Function to monitor Twitch chat for skip votes
+def monitor_chat(skip_event, vote_threshold=3):
+    client = irc.client.Reactor()
+    try:
+        c = client.server().connect("irc.chat.twitch.tv", 6667, Twitch_Nick, Twitch_OAuth_Token)
+    except irc.client.ServerConnectionError as e:
+        print(f"Error connecting to Twitch chat: {e}")
+        return
+
+    votes = set()
+    reset_time = 60  # Reset votes every 60 seconds
+    last_reset = time.time()
+
+    def on_pubmsg(connection, event):
+        message = event.arguments[0]
+        username = event.source.nick.lower()  # Convert to lower case for case-insensitive comparison
+
+        if message.strip().lower() == "!skip":
+            if username in Instant_Skip_Users:
+                # If the message is from an instant skip user, skip immediately
+                message_to_chat = f"Skip command received from privileged user {username}. Skipping current clip."
+                print(message_to_chat)
+                send_message_to_chat(message_to_chat)
+                skip_event.set()
+                votes.clear()  # Reset votes
+            else:
+                # Regular viewer voting
+                votes.add(username)
+                total_votes = len(votes)
+                message_to_chat = f"Received !skip from {username}. Total votes: {total_votes}/{vote_threshold}"
+                print(message_to_chat)
+                send_message_to_chat(message_to_chat)
+                if total_votes >= vote_threshold:
+                    message_to_chat = "Vote threshold reached. Skipping current clip."
+                    print(message_to_chat)
+                    send_message_to_chat(message_to_chat)
+                    skip_event.set()
+                    votes.clear()  # Reset votes after skipping
+
+    c.add_global_handler("pubmsg", on_pubmsg)
+    c.join(f"#{Twitch_Channel}")
+
+    while True:
+        client.process_once(0.2)
+        # Reset votes periodically
+        if time.time() - last_reset > reset_time:
+            votes.clear()
+            last_reset = time.time()
+
+
 # Function to pipe media to the streaming FFmpeg instance
 def pipe_to_stream(media_file, is_preprocessed):
-    global stream_proc, normalize_proc
+    global stream_proc, normalize_proc, skip_event
+
+    skipped = False  # Flag to indicate if the clip was skipped
 
     if is_preprocessed:
         print(f"Streaming preprocessed file: {media_file}")
@@ -145,13 +216,14 @@ def pipe_to_stream(media_file, is_preprocessed):
             "-i", media_file,
             "-c", "copy",
             "-f", "mpegts",
-            "-"
+            "pipe:1"
         ]
     else:
         print(f"Normalizing and streaming: {media_file}")
         ffmpeg_command = [
             "ffmpeg",
             "-loglevel", "error",
+            "-re",
             "-i", media_file,
             "-s", "1280x720",
             "-c:v", "libx264",
@@ -161,16 +233,41 @@ def pipe_to_stream(media_file, is_preprocessed):
             "-c:a", "aac",
             "-ar", "44100",
             "-f", "mpegts",
-            "-"
+            "pipe:1"
         ]
 
+    # Start normalize_proc
     normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
-    while True:
-        data = normalize_proc.stdout.read(65536)
-        if not data:
-            break
-        stream_proc.stdin.write(data)
-    normalize_proc.wait()
+    try:
+        while True:
+            # Read data from normalize_proc
+            data = normalize_proc.stdout.read(65536)
+            if not data:
+                break  # EOF reached, clip finished
+
+            # Write data to stream_proc.stdin
+            stream_proc.stdin.write(data)
+
+            # Check for skip event
+            if skip_event.is_set():
+                print("Skip event detected. Terminating current clip.")
+                skip_event.clear()  # Reset the skip event
+
+                # Terminate normalize_proc
+                if normalize_proc.poll() is None:
+                    normalize_proc.terminate()
+                    normalize_proc.wait()
+
+                skipped = True  # Set the skipped flag
+                break  # Break out to proceed to the next clip
+
+    finally:
+        # Ensure normalize_proc is terminated
+        if normalize_proc.poll() is None:
+            normalize_proc.terminate()
+            normalize_proc.wait()
+
+    return skipped  # Return whether the clip was skipped
 
 
 # Function to stream media files and recheck playlist between clips
@@ -205,7 +302,6 @@ def stream_and_recheck_playlist(last_played_id=None):
             media_release_date = media.get('release_date', 'Unknown')
 
             if media_id in played_ids:
-                # Skip videos that have already been played
                 idx += 1
                 continue
 
@@ -214,13 +310,18 @@ def stream_and_recheck_playlist(last_played_id=None):
             message = f"Nyt toistetaan: {media_title} (Julkaisupäivä: {media_release_date})"
             send_message_to_chat(message)
 
+            # Stream the media file and get the skipped flag
             if "_processed.mp4" in media_file and os.path.exists(media_file):
-                pipe_to_stream(media_file, is_preprocessed=True)
+                skipped = pipe_to_stream(media_file, is_preprocessed=True)
             else:
-                pipe_to_stream(media_file, is_preprocessed=False)
+                skipped = pipe_to_stream(media_file, is_preprocessed=False)
 
             save_progress(media_id)
-            play_transition()
+
+            # Play transition only if the clip wasn't skipped
+            if not skipped:
+                play_transition_to_stream()
+
             idx += 1
 
         print("Reached the end of the playlist. Rechecking for new clips...")
@@ -246,6 +347,11 @@ def main():
         print(f"Resuming from video id: {last_played_id}")
     else:
         print("Starting from the first video.")
+
+    # Start the chat monitoring thread with the adjusted vote threshold
+    chat_thread = threading.Thread(target=monitor_chat, args=(skip_event,))
+    chat_thread.daemon = True  # Ensures the thread will exit when the main program exits
+    chat_thread.start()
 
     stream_and_recheck_playlist(last_played_id=last_played_id)
 
