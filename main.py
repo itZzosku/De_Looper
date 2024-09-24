@@ -5,6 +5,7 @@ import signal
 import sys
 import irc.client  # For sending messages to Twitch chat
 import threading
+import time
 
 # Global variables for processes
 stream_proc = None
@@ -43,6 +44,7 @@ stream_command = [
     "-f", "flv",  # Output format for Twitch
     Twitch_URL
 ]
+
 
 # Function to send a message to Twitch chat
 def send_message_to_chat(message):
@@ -245,6 +247,9 @@ def stream_and_recheck_playlist(last_played_id=None):
                 continue
 
             played_ids.add(media_id)  # Mark this video as played
+
+            # Introduce a 4-second delay before sending the message
+            time.sleep(4)
 
             message = f"Nyt toistetaan: {media_title} (Julkaisupäivä: {media_release_date})"
             send_message_to_chat(message)
