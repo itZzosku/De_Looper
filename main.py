@@ -74,45 +74,55 @@ def play_transition():
         print("Stream process is not running. Transition cannot be played.")
         return
 
+    # Define the FFmpeg command to generate the 3-second black screen transition
     ffmpeg_command = [
         "ffmpeg",
         "-f", "lavfi",
         "-loglevel", "error",
-        "-i", "color=c=black:s=1280x720:r=30:d=3",
+        "-i", "color=c=black:s=1280x720:r=30:d=3",  # Black screen video
         "-f", "lavfi",
-        "-i", "anullsrc=r=44100:cl=stereo",
+        "-i", "anullsrc=r=44100:cl=stereo",  # Silent audio
         "-c:v", "libx264",
         "-c:a", "aac",
         "-ar", "44100",
-        "-t", "3",
+        "-t", "3",  # Duration of 3 seconds
         "-f", "mpegts",
         "-"
     ]
 
     # Start the transition process
-    transition_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
+    transition_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     try:
         while True:
+            # Read from the transition process output
             data = transition_proc.stdout.read(65536)
             if not data:
                 break
 
             # Check if stream_proc is still running before writing to stdin
             if stream_proc and stream_proc.stdin and stream_proc.poll() is None:
-                stream_proc.stdin.write(data)
+                try:
+                    stream_proc.stdin.write(data)
+                except (BrokenPipeError, ValueError):
+                    print("Stream process was closed during transition.")
+                    break
             else:
                 print("Stream process was closed during transition.")
                 break
 
     finally:
+        # Wait for the transition process to finish
         transition_proc.wait()
 
-        if stream_proc and stream_proc.stdin:
+        # Flush, but DO NOT close the stream_proc stdin to keep it alive
+        if stream_proc and stream_proc.stdin and stream_proc.poll() is None:
             try:
                 stream_proc.stdin.flush()  # Ensure any remaining data is flushed
-            except BrokenPipeError:
-                print("Broken pipe when flushing stream after transition.")
+            except (BrokenPipeError, ValueError):
+                print("Broken pipe or ValueError when flushing stream after transition.")
+        else:
+            print("Stream process already closed, cannot flush.")
 
 
 # Function to read playlist from the JSON file with UTF-8 encoding
@@ -164,11 +174,11 @@ signal.signal(signal.SIGINT, graceful_shutdown)
 signal.signal(signal.SIGTERM, graceful_shutdown)
 
 
-# Function to monitor Twitch chat for skip votes
+# Monitor chat for skip votes and trigger skip event when threshold is met
 def monitor_chat(skip_event):
     client = irc.client.Reactor()
-    skip_votes = set()  # Set to track unique users voting to skip
-    skip_threshold = 3  # Number of unique votes required to skip
+    skip_votes = set()
+    skip_threshold = 3
 
     try:
         c = client.server().connect("irc.chat.twitch.tv", 6667, Twitch_Nick, Twitch_OAuth_Token)
@@ -177,33 +187,31 @@ def monitor_chat(skip_event):
         return
 
     def on_pubmsg(connection, event):
-        username = event.source.nick.lower()  # Convert the username from chat to lowercase
+        username = event.source.nick.lower()
         message = event.arguments[0].strip().lower()
 
         if message == "!skip":
-            # Compare the username in a case-insensitive way
             if username in [user.lower() for user in Instant_Skip_Users]:
                 print(f"{username} is an instant skip user. Skipping immediately.")
-                skip_event.set()  # Skip immediately for users in Instant_Skip_Users
+                skip_event.set()  # Trigger skip
                 send_message_to_chat(f"{username} skipped the current clip!")
             else:
-                # Add the user to the set of voters if they haven't voted yet
                 if username not in skip_votes:
                     skip_votes.add(username)
                     print(f"{username} voted to skip. Total votes: {len(skip_votes)}")
 
-                # Check if the number of unique votes has reached the threshold
                 if len(skip_votes) >= skip_threshold:
                     print(f"Skip threshold reached with {len(skip_votes)} votes. Skipping the clip.")
-                    skip_event.set()  # Trigger skip after reaching the vote threshold
+                    skip_event.set()
                     send_message_to_chat(f"Skip threshold reached with {len(skip_votes)} votes! Skipping the current clip.")
-                    skip_votes.clear()  # Reset the votes for the next clip
+                    skip_votes.clear()
 
     c.add_global_handler("pubmsg", on_pubmsg)
     c.join(f"#{Twitch_Channel}")
 
     while True:
         client.process_once(0.2)
+
 
 
 # Function to pipe media to the streaming FFmpeg instance
@@ -215,9 +223,9 @@ def pipe_to_stream(media_file, is_preprocessed):
         ffmpeg_command = [
             "ffmpeg",
             "-loglevel", "error",
-            "-re",
+            "-re",  # Ensure real-time streaming
             "-i", media_file,
-            "-c", "copy",
+            "-c", "copy",  # Avoid re-encoding for preprocessed files
             "-f", "mpegts",
             "-"
         ]
@@ -227,7 +235,7 @@ def pipe_to_stream(media_file, is_preprocessed):
             "ffmpeg",
             "-loglevel", "error",
             "-i", media_file,
-            "-s", "1280x720",
+            "-s", "1280x720",  # Set resolution
             "-c:v", "libx264",
             "-b:v", "2300k",
             "-g", "60",
@@ -238,6 +246,7 @@ def pipe_to_stream(media_file, is_preprocessed):
             "-"
         ]
 
+    # Start FFmpeg to process the media file
     normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
 
     try:
@@ -249,11 +258,11 @@ def pipe_to_stream(media_file, is_preprocessed):
                     skip_event.clear()  # Reset the skip event
                 break
 
-            # Check if stream_proc is still valid and running before writing to stdin
+            # Write the data to stream_proc stdin (continuous streaming)
             if stream_proc and stream_proc.stdin and stream_proc.poll() is None:
                 stream_proc.stdin.write(data)
             else:
-                print("Stream process was closed while streaming media.")
+                print("Stream process was closed during media playback.")
                 break
 
     finally:
@@ -261,10 +270,11 @@ def pipe_to_stream(media_file, is_preprocessed):
             normalize_proc.terminate()
             normalize_proc.wait()
 
+        # Flush but don't close stream_proc to keep it running
         if stream_proc and stream_proc.stdin:
             try:
-                stream_proc.stdin.flush()
-            except BrokenPipeError:
+                stream_proc.stdin.flush()  # Ensure any remaining data is flushed
+            except (BrokenPipeError, ValueError):
                 print("Broken pipe when flushing stream after media playback.")
 
 
@@ -272,8 +282,10 @@ def pipe_to_stream(media_file, is_preprocessed):
 def stream_and_recheck_playlist(last_played_id=None):
     global stream_proc
 
-    # Start the streaming process
-    stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
+    # Ensure stream_proc is started once and kept alive throughout
+    if stream_proc is None or stream_proc.poll() is not None:
+        print("Starting stream process.")
+        stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
 
     played_ids = set()  # To track the IDs that have been played
 
