@@ -20,6 +20,10 @@ with open(config_file, 'r', encoding='utf-8') as f:
     Twitch_OAuth_Token = config_data.get("Twitch_OAuth_Token")
     Twitch_Nick = config_data.get("Twitch_Nick")
     Twitch_Channel = config_data.get("Twitch_Channel")
+    Instant_Skip_Users = config_data.get("Instant_Skip_Users", [])  # List of users who can skip instantly
+
+# Convert Instant_Skip_Users to lowercase for case-insensitive comparison
+Instant_Skip_Users = [user.lower() for user in Instant_Skip_Users]
 
 Twitch_URL = f"rtmp://live.twitch.tv/app/{Twitch_Stream_Key}"
 
@@ -138,6 +142,8 @@ signal.signal(signal.SIGTERM, graceful_shutdown)
 # Function to monitor Twitch chat for skip votes
 def monitor_chat(skip_event):
     client = irc.client.Reactor()
+    votes = set()  # To track unique voters
+    vote_threshold = 3  # Required votes to skip the video
 
     try:
         c = client.server().connect("irc.chat.twitch.tv", 6667, Twitch_Nick, Twitch_OAuth_Token)
@@ -147,11 +153,28 @@ def monitor_chat(skip_event):
 
     def on_pubmsg(connection, event):
         message = event.arguments[0].strip().lower()
+        username = event.source.nick.lower()  # Get the username of the person who sent the message
 
         if message == "!skip":
-            print("Received skip command from chat")
-            skip_event.set()  # Trigger skip event
-            send_message_to_chat("Skipping current clip!")
+            if username in Instant_Skip_Users:
+                # Privileged users can skip instantly
+                print(f"Skip command received from privileged user {username}. Skipping current clip.")
+                send_message_to_chat(f"{username} skipped the current clip!")
+                skip_event.set()
+                votes.clear()  # Reset votes
+            else:
+                # Regular users need to vote to skip
+                if username not in votes:
+                    votes.add(username)
+                    total_votes = len(votes)
+                    print(f"Received !skip from {username}. Total votes: {total_votes}/{vote_threshold}")
+                    send_message_to_chat(f"{username} voted to skip. Total votes: {total_votes}/{vote_threshold}")
+
+                    if total_votes >= vote_threshold:
+                        print("Vote threshold reached. Skipping current clip.")
+                        send_message_to_chat("Vote threshold reached. Skipping current clip!")
+                        skip_event.set()
+                        votes.clear()  # Reset votes after skipping
 
     c.add_global_handler("pubmsg", on_pubmsg)
     c.join(f"#{Twitch_Channel}")
@@ -192,7 +215,8 @@ def pipe_to_stream(media_file, is_preprocessed):
             "-"
         ]
 
-    normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
+    # Capture both stdout and stderr for logging
+    normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     try:
         while True:
@@ -203,8 +227,14 @@ def pipe_to_stream(media_file, is_preprocessed):
                     skip_event.clear()  # Reset the skip event
                 break
             stream_proc.stdin.write(data)
+            stream_proc.stdin.flush()  # Ensure data is flushed to stream_proc
 
     finally:
+        # Capture and print stderr output for debugging
+        stdout, stderr = normalize_proc.communicate()
+        if normalize_proc.returncode != 0:
+            print(f"FFmpeg error: {stderr.decode()}")
+
         if normalize_proc.poll() is None:
             normalize_proc.terminate()
             normalize_proc.wait()
