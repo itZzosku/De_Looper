@@ -165,22 +165,16 @@ def monitor_chat(skip_event, vote_threshold=3):
         if message.strip().lower() == "!skip":
             if username in Instant_Skip_Users:
                 # If the message is from an instant skip user, skip immediately
-                message_to_chat = f"Skip command received from privileged user {username}. Skipping current clip."
-                print(message_to_chat)
-                send_message_to_chat(message_to_chat)
+                print(f"Skip command received from privileged user {username}. Skipping current clip.")
                 skip_event.set()
                 votes.clear()  # Reset votes
             else:
                 # Regular viewer voting
                 votes.add(username)
                 total_votes = len(votes)
-                message_to_chat = f"Received !skip from {username}. Total votes: {total_votes}/{vote_threshold}"
-                print(message_to_chat)
-                send_message_to_chat(message_to_chat)
+                print(f"Received !skip from {username}. Total votes: {total_votes}/{vote_threshold}")
                 if total_votes >= vote_threshold:
-                    message_to_chat = "Vote threshold reached. Skipping current clip."
-                    print(message_to_chat)
-                    send_message_to_chat(message_to_chat)
+                    print("Vote threshold reached. Skipping current clip.")
                     skip_event.set()
                     votes.clear()  # Reset votes after skipping
 
@@ -228,37 +222,19 @@ def pipe_to_stream(media_file, is_preprocessed):
         ]
 
     normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
-
-    # Buffer to hold data from normalize_proc
-    data_buffer = []
-
     while True:
         if skip_event.is_set():
-            print("Skip event detected. Skipping to next clip.")
+            print("Skip event detected. Terminating current clip.")
+            normalize_proc.terminate()
+            normalize_proc.wait()
             skip_event.clear()  # Reset the skip event
-            # Play the transition
-            play_transition()
-            break  # Exit the loop to proceed to the next clip
+            break
 
         data = normalize_proc.stdout.read(65536)
         if not data:
             break
         stream_proc.stdin.write(data)
-
-    # Continue reading from normalize_proc.stdout to prevent it from blocking
-    def drain_normalize_proc():
-        while True:
-            data = normalize_proc.stdout.read(65536)
-            if not data:
-                break
-        normalize_proc.wait()
-
-    # Start a thread to drain normalize_proc.stdout
-    drain_thread = threading.Thread(target=drain_normalize_proc)
-    drain_thread.start()
-
-    # Ensure the drain_thread finishes
-    drain_thread.join()
+    normalize_proc.wait()
 
 
 # Function to stream media files and recheck playlist between clips
