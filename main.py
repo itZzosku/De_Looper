@@ -4,10 +4,13 @@ import json
 import signal
 import sys
 import irc.client  # For sending messages to Twitch chat
+import threading
+import time
 
 # Global variables for processes
 stream_proc = None
 normalize_proc = None  # Ensure both are initialized at the module level
+skip_event = threading.Event()  # Event to signal skipping the current clip
 
 # Twitch configuration for streaming and chat
 config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -132,9 +135,34 @@ signal.signal(signal.SIGINT, graceful_shutdown)
 signal.signal(signal.SIGTERM, graceful_shutdown)
 
 
+# Function to monitor Twitch chat for skip votes
+def monitor_chat(skip_event):
+    client = irc.client.Reactor()
+
+    try:
+        c = client.server().connect("irc.chat.twitch.tv", 6667, Twitch_Nick, Twitch_OAuth_Token)
+    except irc.client.ServerConnectionError as e:
+        print(f"Error connecting to Twitch chat: {e}")
+        return
+
+    def on_pubmsg(connection, event):
+        message = event.arguments[0].strip().lower()
+
+        if message == "!skip":
+            print("Received skip command from chat")
+            skip_event.set()  # Trigger skip event
+            send_message_to_chat("Skipping current clip!")
+
+    c.add_global_handler("pubmsg", on_pubmsg)
+    c.join(f"#{Twitch_Channel}")
+
+    while True:
+        client.process_once(0.2)
+
+
 # Function to pipe media to the streaming FFmpeg instance
 def pipe_to_stream(media_file, is_preprocessed):
-    global stream_proc, normalize_proc
+    global stream_proc, normalize_proc, skip_event
 
     if is_preprocessed:
         print(f"Streaming preprocessed file: {media_file}")
@@ -165,12 +193,21 @@ def pipe_to_stream(media_file, is_preprocessed):
         ]
 
     normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
-    while True:
-        data = normalize_proc.stdout.read(65536)
-        if not data:
-            break
-        stream_proc.stdin.write(data)
-    normalize_proc.wait()
+
+    try:
+        while True:
+            data = normalize_proc.stdout.read(65536)
+            if not data or skip_event.is_set():
+                if skip_event.is_set():
+                    print("Skip event detected. Terminating current clip.")
+                    skip_event.clear()  # Reset the skip event
+                break
+            stream_proc.stdin.write(data)
+
+    finally:
+        if normalize_proc.poll() is None:
+            normalize_proc.terminate()
+            normalize_proc.wait()
 
 
 # Function to stream media files and recheck playlist between clips
@@ -211,6 +248,9 @@ def stream_and_recheck_playlist(last_played_id=None):
 
             played_ids.add(media_id)  # Mark this video as played
 
+            # Introduce a 4-second delay before sending the message
+            time.sleep(4)
+
             message = f"Nyt toistetaan: {media_title} (Julkaisupäivä: {media_release_date})"
             send_message_to_chat(message)
 
@@ -246,6 +286,11 @@ def main():
         print(f"Resuming from video id: {last_played_id}")
     else:
         print("Starting from the first video.")
+
+    # Start the chat monitoring thread
+    chat_thread = threading.Thread(target=monitor_chat, args=(skip_event,))
+    chat_thread.daemon = True  # Ensures the thread will exit when the main program exits
+    chat_thread.start()
 
     stream_and_recheck_playlist(last_played_id=last_played_id)
 
