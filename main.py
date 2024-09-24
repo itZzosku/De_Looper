@@ -293,6 +293,8 @@ def pipe_to_stream(media_file, is_preprocessed):
                 if skip_event.is_set():
                     print("Skip event detected. Terminating current clip.")
                     skip_event.clear()  # Reset the skip event
+                    # Play the transition after skipping
+                    play_transition()
                 break
 
             # Write the data to stream_proc stdin (continuous streaming)
