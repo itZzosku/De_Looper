@@ -72,8 +72,8 @@ def send_message_to_chat(message):
     client.process_once(0.5)
 
 
-# Function to play a 3-second black screen transition
-def play_transition():
+# Function to play a 3-second black screen transition to stream_proc
+def play_transition_to_stream():
     ffmpeg_command = [
         "ffmpeg",
         "-f", "lavfi",
@@ -82,11 +82,13 @@ def play_transition():
         "-f", "lavfi",
         "-i", "anullsrc=r=44100:cl=stereo",
         "-c:v", "libx264",
+        "-b:v", "2300k",
+        "-g", "60",
+        "-r", "30",
         "-c:a", "aac",
         "-ar", "44100",
-        "-t", "3",
         "-f", "mpegts",
-        "-"
+        "pipe:1"
     ]
 
     transition_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
@@ -134,10 +136,14 @@ def graceful_shutdown(signum, frame):
 
     if normalize_proc and normalize_proc.poll() is None:
         normalize_proc.terminate()
+        normalize_proc.wait()
 
     if stream_proc and stream_proc.poll() is None:
         stream_proc.stdin.close()
         stream_proc.terminate()
+        stream_proc.wait()
+
+    sys.exit(0)  # Exit the program
 
 
 # Register the shutdown handler
@@ -208,13 +214,14 @@ def pipe_to_stream(media_file, is_preprocessed):
             "-i", media_file,
             "-c", "copy",
             "-f", "mpegts",
-            "-"
+            "pipe:1"
         ]
     else:
         print(f"Normalizing and streaming: {media_file}")
         ffmpeg_command = [
             "ffmpeg",
             "-loglevel", "error",
+            "-re",
             "-i", media_file,
             "-s", "1280x720",
             "-c:v", "libx264",
@@ -224,41 +231,43 @@ def pipe_to_stream(media_file, is_preprocessed):
             "-c:a", "aac",
             "-ar", "44100",
             "-f", "mpegts",
-            "-"
+            "pipe:1"
         ]
 
+    # Start normalize_proc
     normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE)
 
-    # Buffer to hold data from normalize_proc
-    data_buffer = []
-
-    while True:
-        if skip_event.is_set():
-            print("Skip event detected. Skipping to next clip.")
-            skip_event.clear()  # Reset the skip event
-            # Play the transition
-            play_transition()
-            break  # Exit the loop to proceed to the next clip
-
-        data = normalize_proc.stdout.read(65536)
-        if not data:
-            break
-        stream_proc.stdin.write(data)
-
-    # Continue reading from normalize_proc.stdout to prevent it from blocking
-    def drain_normalize_proc():
+    try:
         while True:
+            # Read data from normalize_proc
             data = normalize_proc.stdout.read(65536)
             if not data:
+                break  # EOF reached, clip finished
+
+            # Write data to stream_proc.stdin
+            stream_proc.stdin.write(data)
+
+            # Check for skip event
+            if skip_event.is_set():
+                print("Skip event detected. Terminating current clip.")
+                skip_event.clear()  # Reset the skip event
+
+                # Terminate normalize_proc
+                if normalize_proc.poll() is None:
+                    normalize_proc.terminate()
+                    normalize_proc.wait()
+
+                # Play transition
+                play_transition_to_stream()
+
+                # Break out to proceed to the next clip
                 break
-        normalize_proc.wait()
 
-    # Start a thread to drain normalize_proc.stdout
-    drain_thread = threading.Thread(target=drain_normalize_proc)
-    drain_thread.start()
-
-    # Ensure the drain_thread finishes
-    drain_thread.join()
+    finally:
+        # Ensure normalize_proc is terminated
+        if normalize_proc.poll() is None:
+            normalize_proc.terminate()
+            normalize_proc.wait()
 
 
 # Function to stream media files and recheck playlist between clips
@@ -308,7 +317,7 @@ def stream_and_recheck_playlist(last_played_id=None):
                 pipe_to_stream(media_file, is_preprocessed=False)
 
             save_progress(media_id)
-            play_transition()
+            play_transition_to_stream()
             idx += 1
 
         print("Reached the end of the playlist. Rechecking for new clips...")
