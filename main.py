@@ -6,8 +6,6 @@ import sys
 import irc.client  # For sending messages to Twitch chat
 import threading
 
-# stable
-
 # Global variables for processes
 stream_proc = None
 normalize_proc = None  # Ensure both are initialized at the module level
@@ -69,12 +67,6 @@ def send_message_to_chat(message):
 # Function to play a 3-second black screen transition
 def play_transition():
     global stream_proc
-
-    # Ensure stream_proc is running before starting the transition
-    if stream_proc is None or stream_proc.poll() is not None:
-        print("Re-initializing stream process for transition.")
-        stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
-
     if stream_proc.stdin.closed:
         print("Error: stream_proc stdin is closed, unable to play transition.")
         return
@@ -100,9 +92,6 @@ def play_transition():
         while True:
             data = transition_proc.stdout.read(65536)
             if not data:
-                break
-            if stream_proc.stdin.closed:
-                print("Error: stream_proc stdin is closed while writing transition.")
                 break
             stream_proc.stdin.write(data)
     except Exception as e:
@@ -165,18 +154,11 @@ def monitor_chat(skip_event):
     skip_votes = set()  # Set to track unique users voting to skip
     skip_threshold = 3  # Number of unique votes required to skip
 
-    def connect_to_irc():
-        try:
-            c = client.server().connect("irc.chat.twitch.tv", 6667, Twitch_Nick, Twitch_OAuth_Token)
-            return c
-        except irc.client.ServerConnectionError as e:
-            print(f"Error connecting to Twitch chat: {e}")
-            return None
-
-    # Connect to Twitch IRC
-    connection = connect_to_irc()
-    if connection is None:
-        return  # Exit if the connection fails
+    try:
+        c = client.server().connect("irc.chat.twitch.tv", 6667, Twitch_Nick, Twitch_OAuth_Token)
+    except irc.client.ServerConnectionError as e:
+        print(f"Error connecting to Twitch chat: {e}")
+        return
 
     def on_pubmsg(connection, event):
         username = event.source.nick.lower()  # Convert the username from chat to lowercase
@@ -185,50 +167,35 @@ def monitor_chat(skip_event):
         if message == "!skip":
             if username in [user.lower() for user in Instant_Skip_Users]:
                 print(f"{username} is an instant skip user. Skipping immediately.")
-                skip_event.set()  # Skip immediately for users in Instant_Skip_Users
+                skip_event.set()
                 send_message_to_chat(f"{username} skipped the current clip!")
             else:
                 if username not in skip_votes:
                     skip_votes.add(username)
-                    print(f"{username} voted to skip. Total votes: {len(skip_votes)}")
-                    send_message_to_chat(
-                        f"{username} voted to skip. Total votes: {len(skip_votes)}/{skip_threshold}")
+                    print(f"{username} voted to skip. Total votes: {len(skip_votes)}/{skip_threshold}")
+                    send_message_to_chat(f"{username} voted to skip. Total votes: {len(skip_votes)}/{skip_threshold}")
 
                 if len(skip_votes) >= skip_threshold:
                     print(f"Skip threshold reached with {len(skip_votes)} votes. Skipping the clip.")
-                    skip_event.set()  # Trigger skip after reaching the vote threshold
+                    skip_event.set()
                     send_message_to_chat(
                         f"Skip threshold reached with {len(skip_votes)} votes! Skipping the current clip.")
-                    skip_votes.clear()  # Reset the votes for the next clip
+                    skip_votes.clear()
 
-    # Add handler for public messages
-    connection.add_global_handler("pubmsg", on_pubmsg)
-    connection.join(f"#{Twitch_Channel}")
+    c.add_global_handler("pubmsg", on_pubmsg)
+    c.join(f"#{Twitch_Channel}")
 
-    # Wait a bit to ensure the connection is stable before processing messages
-    client.process_once(0.5)
-
-    # Continuous processing of chat messages
     while True:
-        try:
-            client.process_once(0.1)  # Reduced delay to make the client more responsive
-        except irc.client.ServerNotConnectedError:
-            print("Lost connection to Twitch IRC. Reconnecting...")
-            connection = connect_to_irc()  # Reconnect if connection is lost
-            if connection is not None:
-                connection.add_global_handler("pubmsg", on_pubmsg)
-                connection.join(f"#{Twitch_Channel}")
-        except Exception as e:
-            print(f"Error while processing chat messages: {e}")
+        client.process_once(0.2)
 
 
 # Function to pipe media to the streaming FFmpeg instance
 def pipe_to_stream(media_file, is_preprocessed):
     global stream_proc, normalize_proc, skip_event
 
-    if stream_proc is None or stream_proc.poll() is not None:
-        print("Re-initializing stream process.")
-        stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
+    if stream_proc.stdin.closed:
+        print("Error: stream_proc stdin is closed, cannot stream.")
+        return
 
     if is_preprocessed:
         print(f"Streaming preprocessed file: {media_file}")
@@ -265,15 +232,8 @@ def pipe_to_stream(media_file, is_preprocessed):
             data = normalize_proc.stdout.read(65536)
             if not data or skip_event.is_set():
                 if skip_event.is_set():
-                    print("Skip event detected. Playing transition immediately.")
+                    print("Skip event detected. Terminating current clip.")
                     skip_event.clear()
-                    play_transition()
-                else:
-                    print("Clip ended. Playing transition before next clip.")
-                    play_transition()  # Play transition immediately between clips
-                break
-            if stream_proc.stdin.closed:
-                print("Error: stream_proc is closed while writing data.")
                 break
             stream_proc.stdin.write(data)
 
@@ -281,21 +241,17 @@ def pipe_to_stream(media_file, is_preprocessed):
         if normalize_proc.poll() is None:
             normalize_proc.terminate()
             normalize_proc.wait()
-        # Do not close stream_proc stdin here
 
 
 # Function to stream media files and recheck playlist between clips
 def stream_and_recheck_playlist(last_played_id=None):
     global stream_proc
 
-    if stream_proc is None or stream_proc.poll() is not None:
-        print("Initializing stream process.")
-        stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
+    stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
 
-    played_ids = set()  # To track the IDs that have been played
+    played_ids = set()
 
     while True:
-        # Reload playlist before starting a new clip
         media_files = get_media_files_from_playlist(playlist_json)
 
         if not media_files:
@@ -318,19 +274,13 @@ def stream_and_recheck_playlist(last_played_id=None):
             media_release_date = media.get('release_date', 'Unknown')
 
             if media_id in played_ids:
-                # Skip videos that have already been played
                 idx += 1
                 continue
 
-            played_ids.add(media_id)  # Mark this video as played
+            played_ids.add(media_id)
 
             message = f"Nyt toistetaan: {media_title} (Julkaisupäivä: {media_release_date})"
             send_message_to_chat(message)
-
-            # Reinitialize stream_proc if needed
-            if stream_proc is None or stream_proc.poll() is not None:
-                print("Re-initializing stream process before playing next clip.")
-                stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
 
             if "_processed.mp4" in media_file and os.path.exists(media_file):
                 pipe_to_stream(media_file, is_preprocessed=True)
@@ -338,11 +288,11 @@ def stream_and_recheck_playlist(last_played_id=None):
                 pipe_to_stream(media_file, is_preprocessed=False)
 
             save_progress(media_id)
-            play_transition()  # Ensure transition is played after each video
+            play_transition()
             idx += 1
 
         print("Reached the end of the playlist. Rechecking for new clips...")
-        last_played_id = None  # Reset to start from the first video on the next loop
+        last_played_id = None
 
 
 # Main function to run the whole process
@@ -365,9 +315,8 @@ def main():
     else:
         print("Starting from the first video.")
 
-    # Start the chat monitoring thread
     chat_thread = threading.Thread(target=monitor_chat, args=(skip_event,))
-    chat_thread.daemon = True  # Ensures the thread will exit when the main program exits
+    chat_thread.daemon = True
     chat_thread.start()
 
     stream_and_recheck_playlist(last_played_id=last_played_id)
