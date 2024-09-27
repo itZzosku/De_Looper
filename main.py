@@ -5,13 +5,17 @@ import signal
 import sys
 import threading
 import socket  # For connecting to Twitch IRC chat
+import time  # For tracking stream duration
 
-# Stable 25/09/2024
 
 # Global variables for processes
 stream_proc = None
 normalize_proc = None
 skip_event = threading.Event()  # Event to signal skipping the current clip
+stream_start_time = None  # Variable to track when stream_proc was started
+
+# Maximum stream duration before restarting (e.g., 47 hours)
+max_stream_duration = 47 * 60 * 60  # 47 hours in seconds
 
 # Twitch configuration for streaming and chat
 config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -334,12 +338,13 @@ def pipe_to_stream(media_file, is_preprocessed):
 
 # Function to stream media files and recheck playlist between clips
 def stream_and_recheck_playlist(last_played_id=None):
-    global stream_proc
+    global stream_proc, stream_start_time
 
     # Ensure stream_proc is started once and kept alive throughout
     if stream_proc is None or stream_proc.poll() is not None:
         print("Starting stream process.")
         stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
+        stream_start_time = time.time()
         print(f"Started stream_proc with PID: {stream_proc.pid}")
 
     played_ids = set()  # To track the IDs that have been played
@@ -388,6 +393,31 @@ def stream_and_recheck_playlist(last_played_id=None):
                 play_transition()  # Ensure the transition plays between videos
                 print(f"Finished processing media ID {media_id}. Moving to the next clip.")
                 idx += 1
+
+                # Check if we need to restart the stream_proc to avoid Twitch's 48h limit
+                if time.time() - stream_start_time > max_stream_duration:
+                    print("Stream has been running for more than maximum duration. Restarting stream_proc.")
+
+                    # Gracefully terminate stream_proc
+                    if stream_proc and stream_proc.poll() is None:
+                        if stream_proc.stdin:
+                            try:
+                                stream_proc.stdin.close()
+                            except Exception as e:
+                                print(f"Error closing stream_proc.stdin: {e}")
+                        stream_proc.terminate()
+                        try:
+                            stream_proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            print("stream_proc did not terminate in time. Killing it.")
+                            stream_proc.kill()
+                            stream_proc.wait()
+
+                    # Start a new stream_proc
+                    print("Starting new stream process.")
+                    stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
+                    stream_start_time = time.time()
+                    print(f"Started new stream_proc with PID: {stream_proc.pid}")
 
             print("Reached the end of the playlist. Rechecking for new clips...")
             last_played_id = None  # Reset to start from the first video on the next loop
