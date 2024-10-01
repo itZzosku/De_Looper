@@ -42,8 +42,15 @@ def get_date_string(published_at):
 
 
 def sanitize_filename(title):
-    # Replace problematic characters (e.g., slashes, colons, etc.) with hyphens
-    return re.sub(r'[\\/:"*?<>|]', '-', title)
+    # Define problematic characters
+    problematic_chars = '\\/:\"*?<>|'
+    # Create a translation table: map each problematic character to '-'
+    translation_table = str.maketrans({char: '-' for char in problematic_chars})
+    # Replace problematic characters using translate
+    sanitized = title.translate(translation_table)
+    # Normalize whitespace by splitting and rejoining
+    sanitized = ' '.join(sanitized.split()).rstrip('_')
+    return sanitized
 
 
 def preprocess_file(input_file, output_file, codec):
