@@ -56,10 +56,14 @@ def extract_video_name_and_date(filename):
 
 
 def sanitize_filename(title):
-    # Replace problematic characters (e.g., slashes, colons, etc.) with hyphens
-    sanitized = re.sub(r'[\\/:"*?<>|]', '-', title)
-    # Normalize whitespace and remove trailing underscores
-    sanitized = re.sub(r'\s+', ' ', sanitized).strip().rstrip('_')
+    # Define problematic characters
+    problematic_chars = '\\/:\"*?<>|'
+    # Create a translation table: map each problematic character to '-'
+    translation_table = str.maketrans({char: '-' for char in problematic_chars})
+    # Replace problematic characters using translate
+    sanitized = title.translate(translation_table)
+    # Normalize whitespace by splitting and rejoining
+    sanitized = ' '.join(sanitized.split()).rstrip('_')
     return sanitized
 
 
@@ -81,29 +85,42 @@ def load_videos_json(videos_json_path):
         return None
 
 
-def find_video_number(videos_list, sanitized_video_name, video_date):
-    matches = []
+def build_video_lookup(videos_list):
+    video_lookup = {}
+    duplicates = {}
     for video in videos_list:
         original_video_name = video.get('name')
-        if original_video_name is None:
-            continue
-        sanitized_name_in_json = sanitize_filename(original_video_name)
-        # Extract date from 'publishedAt'
         published_at = video.get('publishedAt')
-        if published_at:
-            published_date = published_at.split('T')[0]  # 'YYYY-MM-DD'
-        else:
-            continue
-        if sanitized_name_in_json == sanitized_video_name and published_date == video_date:
-            matches.append(video)
+        video_number = video.get('videoNumber')
 
-    if len(matches) == 1:
-        return matches[0].get('videoNumber')
-    elif len(matches) > 1:
-        print(f"Multiple videos found for '{sanitized_video_name}' on date {video_date}. Skipping.")
-        return None
-    else:
-        return None
+        if original_video_name is None or published_at is None or video_number is None:
+            continue
+
+        sanitized_name = sanitize_filename(original_video_name)
+        published_date = published_at.split('T')[0]  # 'YYYY-MM-DD'
+
+        key = (sanitized_name, published_date)
+
+        if key in video_lookup:
+            # Handle duplicates by tracking them
+            if key not in duplicates:
+                duplicates[key] = [video_lookup[key]]
+            duplicates[key].append(video_number)
+        else:
+            video_lookup[key] = video_number
+
+    # Handle duplicates
+    for key, video_numbers in duplicates.items():
+        sanitized_name, published_date = key
+        print(f"Multiple videos found for '{sanitized_name}' on date {published_date}. Skipping these entries.")
+        for video_number in video_numbers:
+            video_lookup.pop(key, None)  # Remove duplicates
+
+    return video_lookup
+
+
+def find_video_number(video_lookup, sanitized_video_name, video_date):
+    return video_lookup.get((sanitized_video_name, video_date), None)
 
 
 def main():
@@ -173,6 +190,9 @@ def main():
         print("Failed to load videos.json. Exiting.")
         return
 
+    # Build the lookup dictionary
+    video_lookup = build_video_lookup(videos_list)
+
     # Initialize variables
     playlist = {
         "playlist": []
@@ -207,8 +227,8 @@ def main():
                 continue
             sanitized_video_name = sanitize_filename(video_name)
 
-            # Find the videoNumber from videos.json
-            video_number = find_video_number(videos_list, sanitized_video_name, video_date)
+            # Find the videoNumber using the lookup dictionary
+            video_number = find_video_number(video_lookup, sanitized_video_name, video_date)
             if video_number is None:
                 print(f"No matching videoNumber found for '{video_name}' on date {video_date}. Skipping.")
                 continue
