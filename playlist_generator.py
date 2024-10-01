@@ -4,6 +4,7 @@ import json
 import subprocess
 from datetime import datetime
 import argparse
+import ytdlp_prerun  # Import the ytdlp_prerun module
 
 
 def get_video_duration(filepath):
@@ -106,6 +107,16 @@ def find_video_number(videos_list, sanitized_video_name, video_date):
 
 
 def main():
+    # Step 1: Update videos.json by running ytdlp_prerun.py
+    print("Updating videos.json by fetching latest videos from YouTube...")
+    try:
+        ytdlp_prerun.check_and_update_videos_json()
+        print("videos.json has been updated successfully.")
+    except Exception as e:
+        print(f"Error updating videos.json: {e}")
+        print("Exiting the playlist generator.")
+        return
+
     # Set up argument parsing
     parser = argparse.ArgumentParser(description="Generate a playlist JSON from video files.")
     parser.add_argument(
@@ -144,9 +155,15 @@ def main():
 
     # Load duration cache
     duration_cache_path = os.path.join(script_dir, "duration_cache.json")
+    duration_cache = {}
     if os.path.exists(duration_cache_path):
-        with open(duration_cache_path, 'r', encoding='utf-8') as cache_file:
-            duration_cache = json.load(cache_file)
+        try:
+            with open(duration_cache_path, 'r', encoding='utf-8') as cache_file:
+                duration_cache = json.load(cache_file)
+        except json.JSONDecodeError:
+            print(
+                f"Warning: The duration cache file '{duration_cache_path}' is empty or invalid. It will be recreated.")
+            duration_cache = {}
     else:
         duration_cache = {}
 
@@ -164,6 +181,10 @@ def main():
 
     # Process video files
     for video_folder in video_folders:
+        if not os.path.isdir(video_folder):
+            print(f"Video folder '{video_folder}' does not exist or is not a directory. Skipping.")
+            continue
+
         video_files = sorted([f for f in os.listdir(video_folder) if f.endswith('.mp4')])
 
         for video_file in video_files:
