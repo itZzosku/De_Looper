@@ -7,7 +7,6 @@ import threading
 import socket  # For connecting to Twitch IRC chat
 import time  # For tracking stream duration
 
-
 # Global variables for processes
 stream_proc = None
 normalize_proc = None
@@ -134,23 +133,26 @@ def get_media_files_from_playlist(json_file):
     return data.get("playlist", [])
 
 
-# Function to save the last played id to progress.json
-def save_progress(last_id):
+# Function to save the last played videoNumber to progress.json
+def save_progress(last_video_number):
     with open(progress_json, 'w', encoding='utf-8') as f:
-        json.dump({"last_played_id": last_id}, f)
+        json.dump({"last_played_videoNumber": last_video_number}, f, indent=4, ensure_ascii=False)
         f.flush()
         os.fsync(f.fileno())
-    print(f"Progress saved. Last played video id: {last_id}.")
+    print(f"Progress saved. Last played videoNumber: {last_video_number}.")
 
 
-# Function to load the last played id from progress.json and return the next video (last_played_id + 1)
+# Function to load the last played videoNumber from progress.json
 def load_progress():
     if os.path.exists(progress_json):
-        with open(progress_json, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        last_played_id = data.get("last_played_id", None)
-        if last_played_id is not None:
-            return last_played_id + 1
+        try:
+            with open(progress_json, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            last_played_videoNumber = data.get("last_played_videoNumber", None)
+            return last_played_videoNumber
+        except json.JSONDecodeError:
+            print(f"Warning: The progress file '{progress_json}' is empty or invalid. Starting from the beginning.")
+            return None
     return None
 
 
@@ -233,14 +235,15 @@ def monitor_chat(skip_event):
 
                     # Handle the skip command
                     if message.strip().lower() == '!skip':
-                        username = username.lower()
-                        if username in [user.lower() for user in Instant_Skip_Users]:
+                        username_lower = username.lower()
+                        instant_skip_users_lower = [user.lower() for user in Instant_Skip_Users]
+                        if username_lower in instant_skip_users_lower:
                             print(f"{username} is an instant skip user. Skipping immediately.")
                             skip_event.set()  # Trigger skip
                             send_message_to_chat(f"{username} skipped the current clip!")
                         else:
-                            if username not in skip_votes:
-                                skip_votes.add(username)
+                            if username_lower not in skip_votes:
+                                skip_votes.add(username_lower)
                                 print(f"{username} voted to skip. Total votes: {len(skip_votes)}")
 
                             if len(skip_votes) >= skip_threshold:
@@ -337,7 +340,7 @@ def pipe_to_stream(media_file, is_preprocessed):
 
 
 # Function to stream media files and recheck playlist between clips
-def stream_and_recheck_playlist(last_played_id=None):
+def stream_and_recheck_playlist(last_played_videoNumber=None):
     global stream_proc, stream_start_time
 
     # Ensure stream_proc is started once and kept alive throughout
@@ -358,18 +361,25 @@ def stream_and_recheck_playlist(last_played_id=None):
                 print("No media files found in playlist!")
                 return
 
+            # Determine the starting index based on last_played_videoNumber
             start_index = 0
-            if last_played_id is not None:
+            if last_played_videoNumber is not None:
                 for i, media in enumerate(media_files):
-                    if media['id'] == last_played_id:
-                        start_index = i
+                    if media.get('videoNumber') == last_played_videoNumber:
+                        start_index = i + 1  # Start from the next video
+                        print(
+                            f"Found last played videoNumber {last_played_videoNumber} at index {i}. Starting from index {start_index}.")
                         break
+                else:
+                    print(
+                        f"Last played videoNumber {last_played_videoNumber} not found in playlist. Starting from the beginning.")
+                    start_index = 0
 
             idx = start_index
             while idx < len(media_files):
                 media = media_files[idx]
                 media_file = media.get('file_path')
-                media_id = media.get('id')
+                media_id = media.get('videoNumber')
                 media_title = media.get('name', 'Untitled')
                 media_release_date = media.get('release_date', 'Unknown')
 
@@ -380,7 +390,7 @@ def stream_and_recheck_playlist(last_played_id=None):
 
                 played_ids.add(media_id)  # Mark this video as played
 
-                print(f"Starting playback of media ID {media_id}: {media_title}")
+                print(f"Starting playback of mediaNumber {media_id}: {media_title}")
                 message = f"Nyt toistetaan: {media_title} (Julkaisupäivä: {media_release_date})"
                 send_message_to_chat(message)
 
@@ -390,9 +400,6 @@ def stream_and_recheck_playlist(last_played_id=None):
                     pipe_to_stream(media_file, is_preprocessed=False)
 
                 save_progress(media_id)
-                play_transition()  # Ensure the transition plays between videos
-                print(f"Finished processing media ID {media_id}. Moving to the next clip.")
-                idx += 1
 
                 # Check if we need to restart the stream_proc to avoid Twitch's 48h limit
                 if time.time() - stream_start_time > max_stream_duration:
@@ -419,8 +426,14 @@ def stream_and_recheck_playlist(last_played_id=None):
                     stream_start_time = time.time()
                     print(f"Started new stream_proc with PID: {stream_proc.pid}")
 
+                # Play the transition after the clip
+                play_transition()
+
+                print(f"Finished processing mediaNumber {media_id}. Moving to the next clip.")
+                idx += 1
+
             print("Reached the end of the playlist. Rechecking for new clips...")
-            last_played_id = None  # Reset to start from the first video on the next loop
+            last_played_videoNumber = None  # Reset to start from the first video on the next loop
 
         except Exception as e:
             print(f"An error occurred in stream_and_recheck_playlist: {e}")
@@ -432,21 +445,22 @@ def stream_and_recheck_playlist(last_played_id=None):
 
 # Main function to run the whole process
 def main():
+    # Parse command-line arguments for starting videoNumber
     if len(sys.argv) > 1:
         try:
             start_id = int(sys.argv[1])
-            print(f"Starting from video ID: {start_id}")
+            print(f"Starting from videoNumber: {start_id}")
         except ValueError:
-            print("Invalid ID provided. Starting from the last saved position.")
+            print("Invalid videoNumber provided. Starting from the last saved position.")
             start_id = None
     else:
         start_id = None
 
     print(f"Using playlist: {playlist_json}")
-    last_played_id = start_id if start_id else load_progress()
+    last_played_videoNumber = start_id if start_id else load_progress()
 
-    if last_played_id:
-        print(f"Resuming from video id: {last_played_id}")
+    if last_played_videoNumber:
+        print(f"Resuming from videoNumber: {last_played_videoNumber}")
     else:
         print("Starting from the first video.")
 
@@ -456,7 +470,7 @@ def main():
     chat_thread.daemon = True  # Ensures the thread will exit when the main program exits
     chat_thread.start()
 
-    stream_and_recheck_playlist(last_played_id=last_played_id)
+    stream_and_recheck_playlist(last_played_videoNumber=last_played_videoNumber)
 
 
 if __name__ == "__main__":
