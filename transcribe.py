@@ -5,7 +5,7 @@ import torch
 print("GPU Available: ", torch.cuda.is_available())
 
 # Path to your video folder
-video_folder = r'E:\Niilo22\2012'
+video_folder = r'E:\Niilo22\2013'
 
 # Path to the 'transcribes' subfolder
 transcribes_folder = os.path.join(video_folder, 'transcribes')
@@ -36,13 +36,17 @@ for idx, video_file in enumerate(video_files):
     # Print progress for the current video
     print(f"Transcribing video {idx + 1}/{total_files}: {video_file}")
 
-    # Transcribe the video in Finnish
-    result = model.transcribe(video_path, language='fi')  # 'fi' is the language code for Finnish
+    try:
+        # Transcribe the video in Finnish
+        result = model.transcribe(video_path, language='fi')  # 'fi' is the language code for Finnish
 
-    # Save the transcription to a text file in the 'transcribes' folder with UTF-8 encoding
-    with open(transcript_file, 'w', encoding='utf-8') as f:
-        f.write(result['text'])
+        # Save the transcription to a text file in the 'transcribes' folder with UTF-8 encoding
+        with open(transcript_file, 'w', encoding='utf-8') as f:
+            f.write(result['text'])
 
-    print(f"Transcription completed for: {video_file}")
+        print(f"Transcription completed for: {video_file}")
+    except Exception as e:
+        print(f"Failed to transcribe {video_file}: {e}")
+        # Optionally, log the error to a file or take other action
 
 print("All transcriptions are complete.")
