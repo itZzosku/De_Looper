@@ -1,63 +1,10 @@
-import json
 import os
-import re
-from datetime import datetime
 import ytdlp_prerun  # Import the module with the new name
-
-
-def load_videos_from_json(filename='videos.json'):
-    with open(filename, 'r', encoding='utf-8') as json_file:
-        data = json.load(json_file)
-    videos = data.get('videos', [])
-    return videos
-
-
-def filter_videos_by_date(videos, start_date, end_date):
-    # Convert string dates to datetime objects
-    start_date = datetime.strptime(start_date, '%Y-%m-%d')
-    end_date = datetime.strptime(end_date, '%Y-%m-%d')
-
-    # Filter videos by date range
-    filtered_videos = [
-        video for video in videos
-        if start_date <= datetime.strptime(video['publishedAt'], '%Y-%m-%dT%H:%M:%SZ') <= end_date
-    ]
-
-    return filtered_videos
-
-
-def get_unix_timestamp(published_at):
-    # Convert publishedAt string to Unix timestamp
-    dt = datetime.strptime(published_at, '%Y-%m-%dT%H:%M:%SZ')
-    return int(dt.timestamp())
-
-
-def get_date_string(published_at):
-    # Convert publishedAt string to YYYYMMDD format
-    dt = datetime.strptime(published_at, '%Y-%m-%dT%H:%M:%SZ')
-    return dt.strftime('%Y%m%d')
-
-
-def sanitize_filename(title):
-    # Define problematic characters
-    problematic_chars = '\\/:\"*?<>|'
-    # Create a translation table: map each problematic character to '-'
-    translation_table = str.maketrans({char: '-' for char in problematic_chars})
-    # Replace problematic characters using translate
-    sanitized = title.translate(translation_table)
-    # Normalize whitespace by splitting and rejoining
-    sanitized = ' '.join(sanitized.split()).rstrip('_')
-    return sanitized
-
-
-def check_existing_file(video_title, download_path):
-    for file in os.listdir(download_path):
-        if file.endswith(".mp4"):
-            # Extract the part of the filename that contains the video title
-            file_title = file.split('_', 2)[-1].rsplit('_', 1)[0]
-            if file_title == video_title:
-                return os.path.join(download_path, file)  # Return the full path if a match is found
-    return None
+from common_functions import sanitize_filename
+from common_functions import get_unix_timestamp_and_date_string  # Updated to use the combined function
+from common_functions import load_videos_json  # Updated function
+from common_functions import check_existing_file
+from common_functions import filter_videos_by_date
 
 
 def download_videos(videos, download_path):
@@ -73,8 +20,7 @@ def download_videos(videos, download_path):
         published_at = video['publishedAt']
 
         # Generate the timestamp and date string
-        unix_timestamp = get_unix_timestamp(published_at)
-        date_string = get_date_string(published_at)
+        unix_timestamp, date_string = get_unix_timestamp_and_date_string(published_at)
 
         # Create the custom file name: "timestamp_date_video_title.ext"
         output_template = f"{download_path}/{unix_timestamp}_{date_string}_{video_title}"
@@ -100,7 +46,7 @@ def main():
     ytdlp_prerun.check_and_update_videos_json()
 
     # Now load videos from the JSON file
-    videos = load_videos_from_json()
+    videos = load_videos_json()  # Updated function call
 
     # Take user input for date range and download path
     start_date = input("Enter the start date (YYYY-MM-DD): ")

@@ -1,10 +1,11 @@
 import os
-import re
 import json
 import subprocess
 from datetime import datetime
 import argparse
 import ytdlp_prerun  # Import the ytdlp_prerun module
+from common_functions import sanitize_filename
+from common_functions import load_videos_json
 
 
 def get_video_duration(filepath):
@@ -53,36 +54,6 @@ def extract_video_name_and_date(filename):
     except Exception as e:
         print(f"Error extracting video name and date from {filename}: {e}")
         return "Unknown Title", None
-
-
-def sanitize_filename(title):
-    # Define problematic characters
-    problematic_chars = '\\/:\"*?<>|'
-    # Create a translation table: map each problematic character to '-'
-    translation_table = str.maketrans({char: '-' for char in problematic_chars})
-    # Replace problematic characters using translate
-    sanitized = title.translate(translation_table)
-    # Normalize whitespace by splitting and rejoining
-    sanitized = ' '.join(sanitized.split()).rstrip('_')
-    return sanitized
-
-
-def load_videos_json(videos_json_path):
-    try:
-        with open(videos_json_path, 'r', encoding='utf-8') as json_file:
-            videos_data = json.load(json_file)
-        # Check if 'videos' key exists
-        if 'videos' in videos_data and isinstance(videos_data['videos'], list):
-            return videos_data['videos']  # Return the list of videos
-        else:
-            print(f"Error: 'videos' key not found or is not a list in {videos_json_path}")
-            return None
-    except json.JSONDecodeError as e:
-        print(f"JSON decoding error in {videos_json_path}: {e}")
-        return None
-    except Exception as e:
-        print(f"Error loading {videos_json_path}: {e}")
-        return None
 
 
 def build_video_lookup(videos_list):
