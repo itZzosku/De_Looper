@@ -170,12 +170,12 @@ def main():
             file_path = os.path.join(video_folder, video_file)
 
             # Use cached duration if available
-            if file_path in duration_cache:
-                duration = duration_cache[file_path]
+            if video_file in duration_cache:
+                duration = duration_cache[video_file]
             else:
                 duration = get_video_duration(file_path)
                 # Update the cache
-                duration_cache[file_path] = duration
+                duration_cache[video_file] = duration
 
             total_duration += duration  # Add each clip's duration to total
 
@@ -210,11 +210,11 @@ def main():
 
     # Write the JSON to the output file with UTF-8 encoding and ensure_ascii=False
     with open(output_json, 'w', encoding='utf-8') as json_file:
-        json.dump(playlist, json_file, indent=2, ensure_ascii=False)
+        json.dump(playlist, json_file, indent=4, ensure_ascii=False)
 
-    # Save updated duration cache
+    # Save updated duration cache with sorted keys for better readability
     with open(duration_cache_path, 'w', encoding='utf-8') as cache_file:
-        json.dump(duration_cache, cache_file)
+        json.dump(duration_cache, cache_file, indent=4, ensure_ascii=False, sort_keys=True)
 
     print(f"Playlist saved to {output_json}")
     print(f"Total playlist duration: {format_duration(total_duration)}")
