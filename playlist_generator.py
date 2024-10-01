@@ -1,7 +1,8 @@
 import os
+import re
 import json
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime
 import argparse
 
 
@@ -25,29 +26,83 @@ def format_duration(total_seconds):
     return f"{hours}h {minutes}m {seconds}s"
 
 
-def extract_release_data(filename):
+def extract_video_name_and_date(filename):
     try:
-        timestamp_str = filename.split('_')[0]
-        timestamp = int(timestamp_str)
-        release_datetime = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-        release_date = release_datetime.strftime("%Y-%m-%d")
-        release_time = release_datetime.strftime("%H:%M:%S")
-        return release_date, release_time
-    except Exception as e:
-        print(f"Error extracting release data from {filename}: {e}")
-        return "1970-01-01", "00:00:00"
-
-
-def extract_video_name(filename):
-    try:
-        name_part = filename.split('_', 3)
-        if len(name_part) > 2:
-            return name_part[2].split('_')[0].replace('.mp4', '')
+        # Split the filename by '_'
+        parts = filename.split('_')
+        # Ensure there are enough parts
+        if len(parts) >= 3:
+            # The video name is the third part onwards
+            video_name_with_extension = '_'.join(parts[2:])
+            # Remove '_processed.mp4' or '.mp4' suffix
+            if video_name_with_extension.endswith('_processed.mp4'):
+                video_name = video_name_with_extension[:-13]  # Remove '_processed.mp4'
+            else:
+                video_name = os.path.splitext(video_name_with_extension)[0]
+            # Strip any trailing underscores
+            video_name = video_name.rstrip('_')
+            # Extract the date part
+            date_str = parts[1]  # e.g., '20130101'
+            # Convert date_str to 'YYYY-MM-DD' format
+            date_obj = datetime.strptime(date_str, '%Y%m%d')
+            video_date = date_obj.strftime('%Y-%m-%d')
+            return video_name, video_date
         else:
-            return "Unknown Title"
+            return "Unknown Title", None
     except Exception as e:
-        print(f"Error extracting video name from {filename}: {e}")
-        return "Unknown Title"
+        print(f"Error extracting video name and date from {filename}: {e}")
+        return "Unknown Title", None
+
+
+def sanitize_filename(title):
+    # Replace problematic characters (e.g., slashes, colons, etc.) with hyphens
+    sanitized = re.sub(r'[\\/:"*?<>|]', '-', title)
+    # Normalize whitespace and remove trailing underscores
+    sanitized = re.sub(r'\s+', ' ', sanitized).strip().rstrip('_')
+    return sanitized
+
+
+def load_videos_json(videos_json_path):
+    try:
+        with open(videos_json_path, 'r', encoding='utf-8') as json_file:
+            videos_data = json.load(json_file)
+        # Check if 'videos' key exists
+        if 'videos' in videos_data and isinstance(videos_data['videos'], list):
+            return videos_data['videos']  # Return the list of videos
+        else:
+            print(f"Error: 'videos' key not found or is not a list in {videos_json_path}")
+            return None
+    except json.JSONDecodeError as e:
+        print(f"JSON decoding error in {videos_json_path}: {e}")
+        return None
+    except Exception as e:
+        print(f"Error loading {videos_json_path}: {e}")
+        return None
+
+
+def find_video_number(videos_list, sanitized_video_name, video_date):
+    matches = []
+    for video in videos_list:
+        original_video_name = video.get('name')
+        if original_video_name is None:
+            continue
+        sanitized_name_in_json = sanitize_filename(original_video_name)
+        # Extract date from 'publishedAt'
+        published_at = video.get('publishedAt')
+        if published_at:
+            published_date = published_at.split('T')[0]  # 'YYYY-MM-DD'
+        else:
+            continue
+        if sanitized_name_in_json == sanitized_video_name and published_date == video_date:
+            matches.append(video)
+
+    if len(matches) == 1:
+        return matches[0].get('videoNumber')
+    elif len(matches) > 1:
+        print(f"Multiple videos found for '{sanitized_video_name}' on date {video_date}. Skipping.")
+        return None
+    else:
+        return None
 
 
 def main():
@@ -85,114 +140,81 @@ def main():
     # Output JSON will be saved in the same folder as this script
     script_dir = os.path.dirname(os.path.abspath(__file__))
     output_json = os.path.join(script_dir, "playlist.json")
+    videos_json_path = os.path.join(script_dir, "videos.json")
+
+    # Load duration cache
+    duration_cache_path = os.path.join(script_dir, "duration_cache.json")
+    if os.path.exists(duration_cache_path):
+        with open(duration_cache_path, 'r', encoding='utf-8') as cache_file:
+            duration_cache = json.load(cache_file)
+    else:
+        duration_cache = {}
+
+    # Load videos.json
+    videos_list = load_videos_json(videos_json_path)
+    if videos_list is None:
+        print("Failed to load videos.json. Exiting.")
+        return
 
     # Initialize variables
     playlist = {
         "playlist": []
     }
     total_duration = 0
-    file_id = 1  # Start file ID from 1
 
-    # Check if playlist.json exists
-    if os.path.exists(output_json):
-        try:
-            with open(output_json, 'r', encoding='utf-8') as json_file:
-                existing_data = json.load(json_file)
-
-            # Build a set of existing file paths from the playlist
-            existing_file_paths = set(entry['file_path'] for entry in existing_data.get('playlist', []))
-
-            # Build a set of current file paths from the video folders
-            current_file_paths = set()
-            for video_folder in video_folders:
-                video_files = [f for f in os.listdir(video_folder) if f.endswith('.mp4')]
-                for video_file in video_files:
-                    file_path = os.path.join(video_folder, video_file)
-                    current_file_paths.add(file_path)
-
-            # Check for missing files
-            missing_files = existing_file_paths - current_file_paths
-            new_files = current_file_paths - existing_file_paths
-
-            if missing_files:
-                print("Some files in playlist.json are missing from the folders.")
-                print("Regenerating playlist.json from scratch.")
-                regenerate_playlist = True
-            else:
-                print("No missing files detected. Updating playlist.json with new videos.")
-                regenerate_playlist = False
-                # Load existing playlist
-                playlist = existing_data
-                # Calculate total duration from existing entries
-                total_duration = sum(entry['duration'] for entry in playlist.get('playlist', []))
-                # Update file_id to continue from the last ID
-                if playlist['playlist']:
-                    file_id = max(entry['id'] for entry in playlist['playlist']) + 1
-                else:
-                    file_id = 1
-        except Exception as e:
-            print(f"Error reading existing playlist.json: {e}")
-            print("Regenerating playlist.json from scratch.")
-            regenerate_playlist = True
-    else:
-        print("playlist.json does not exist. Creating a new one.")
-        regenerate_playlist = True
-
-    if regenerate_playlist:
-        # Start fresh
-        playlist = {
-            "playlist": []
-        }
-        total_duration = 0
-        file_id = 1
-        new_files = set()  # Process all files as new
-
-        # Build a set of current file paths from the video folders
-        for video_folder in video_folders:
-            video_files = [f for f in os.listdir(video_folder) if f.endswith('.mp4')]
-            for video_file in video_files:
-                file_path = os.path.join(video_folder, video_file)
-                new_files.add(file_path)
-
-    # Process new files
+    # Process video files
     for video_folder in video_folders:
         video_files = sorted([f for f in os.listdir(video_folder) if f.endswith('.mp4')])
 
         for video_file in video_files:
             file_path = os.path.join(video_folder, video_file)
 
-            if file_path in new_files:
+            # Use cached duration if available
+            if file_path in duration_cache:
+                duration = duration_cache[file_path]
+            else:
                 duration = get_video_duration(file_path)
-                total_duration += duration  # Add each clip's duration to total
+                # Update the cache
+                duration_cache[file_path] = duration
 
-                # Extract release date, time, and video name from the filename
-                release_date, release_time = extract_release_data(video_file)
-                video_name = extract_video_name(video_file)
+            total_duration += duration  # Add each clip's duration to total
 
-                entry = {
-                    "id": file_id,  # Use a global file_id for unique IDs
-                    "name": video_name,
-                    "file_path": file_path,
-                    "duration": duration,
-                    "release_date": release_date,
-                    "release_time": release_time
-                }
-                playlist["playlist"].append(entry)
+            # Extract video name and date from the filename
+            video_name, video_date = extract_video_name_and_date(video_file)
+            if video_date is None:
+                print(f"Could not extract date from filename '{video_file}'. Skipping.")
+                continue
+            sanitized_video_name = sanitize_filename(video_name)
 
-                # Print progress
-                print(f"Processing new file {file_id}: {video_file}")
+            # Find the videoNumber from videos.json
+            video_number = find_video_number(videos_list, sanitized_video_name, video_date)
+            if video_number is None:
+                print(f"No matching videoNumber found for '{video_name}' on date {video_date}. Skipping.")
+                continue
 
-                file_id += 1  # Increment the file ID after each file
+            entry = {
+                "videoNumber": video_number,
+                "name": video_name,
+                "file_path": file_path,
+                "duration": duration,
+                "release_date": video_date,
+                # You can include other fields if needed
+            }
+            playlist["playlist"].append(entry)
+
+            # Print progress
+            print(f"Processed videoNumber {video_number}: {video_file}")
 
     # Update total_duration in the playlist
-    if not regenerate_playlist:
-        # If appending, recalculate total_duration
-        total_duration = sum(entry['duration'] for entry in playlist.get('playlist', []))
     playlist["total_duration"] = format_duration(total_duration)
 
     # Write the JSON to the output file with UTF-8 encoding and ensure_ascii=False
     with open(output_json, 'w', encoding='utf-8') as json_file:
         json.dump(playlist, json_file, indent=2, ensure_ascii=False)
+
+    # Save updated duration cache
+    with open(duration_cache_path, 'w', encoding='utf-8') as cache_file:
+        json.dump(duration_cache, cache_file)
 
     print(f"Playlist saved to {output_json}")
     print(f"Total playlist duration: {format_duration(total_duration)}")
