@@ -6,6 +6,7 @@ import argparse
 import ytdlp_prerun  # Import the ytdlp_prerun module
 from common_functions import sanitize_filename
 from common_functions import load_videos_json
+from urllib.parse import urlparse, urlunparse
 
 
 def get_video_duration(filepath):
@@ -94,6 +95,59 @@ def find_video_number(video_lookup, sanitized_video_name, video_date):
     return video_lookup.get((sanitized_video_name, video_date), None)
 
 
+def commit_and_push_changes(git_username, git_token, script_dir, new_videos_count):
+    try:
+        # Check if duration_cache.json has uncommitted changes
+        git_status_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=script_dir,
+            stdout=subprocess.PIPE, text=True
+        )
+        if "duration_cache.json" in git_status_result.stdout:
+            print("New videos have been added to duration_cache.json. Committing and pushing to git...")
+
+            # Add duration_cache.json
+            subprocess.run(["git", "add", "duration_cache.json"], cwd=script_dir, check=True)
+
+            # Commit with a message including the number of new videos
+            commit_message = f"Added durations for {new_videos_count} new videos to duration_cache.json"
+            subprocess.run(["git", "commit", "-m", commit_message], cwd=script_dir, check=True)
+
+            # Get the remote URL
+            result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=script_dir,
+                stdout=subprocess.PIPE, text=True
+            )
+            git_remote_url = result.stdout.strip()
+
+            # Parse the URL
+            parsed_url = urlparse(git_remote_url)
+
+            # Construct the URL with credentials
+            if parsed_url.scheme == 'https':
+                netloc = f"{git_username}:{git_token}@{parsed_url.netloc}"
+                git_remote_with_credentials = parsed_url._replace(netloc=netloc).geturl()
+                # Push
+                push_result = subprocess.run(
+                    ["git", "push", git_remote_with_credentials],
+                    cwd=script_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+                if push_result.returncode == 0:
+                    print("Changes have been pushed to git successfully.")
+                else:
+                    print("Error pushing changes to git. Please check your git settings and try again.")
+            else:
+                print("Only HTTPS remote URLs are supported for automatic pushing with username and token.")
+        else:
+            print("No changes to duration_cache.json to commit.")
+    except Exception as e:
+        print(f"An error occurred while committing and pushing changes: {e}")
+
+
 def main():
     # Step 1: Update videos.json by running ytdlp_prerun.py
     print("Updating videos.json by fetching latest videos from YouTube...")
@@ -141,6 +195,21 @@ def main():
     output_json = os.path.join(script_dir, "playlist.json")
     videos_json_path = os.path.join(script_dir, "videos.json")
 
+    # Load config.json
+    config_json_path = os.path.join(script_dir, "config.json")
+    try:
+        with open(config_json_path, 'r', encoding='utf-8') as config_file:
+            config = json.load(config_file)
+            git_username = config.get("git_username")
+            git_token = config.get("git_token")
+            if not git_username or not git_token:
+                print("git_username or git_token is missing in config.json. Exiting.")
+                return
+    except Exception as e:
+        print(f"Error loading config.json: {e}")
+        print("Exiting the playlist generator.")
+        return
+
     # Load duration cache
     duration_cache_path = os.path.join(script_dir, "duration_cache.json")
     duration_cache = {}
@@ -170,6 +239,9 @@ def main():
     }
     total_duration = 0
 
+    # Counter for new videos added to duration_cache
+    new_videos_count = 0
+
     # Process video files
     for video_folder in video_folders:
         if not os.path.isdir(video_folder):
@@ -188,6 +260,8 @@ def main():
                 duration = get_video_duration(file_path)
                 # Update the cache
                 duration_cache[video_file] = duration
+                # Increment new videos count
+                new_videos_count += 1
 
             total_duration += duration  # Add each clip's duration to total
 
@@ -230,6 +304,9 @@ def main():
 
     print(f"Playlist saved to {output_json}")
     print(f"Total playlist duration: {format_duration(total_duration)}")
+
+    # Commit and push changes to git if duration_cache.json has been updated
+    commit_and_push_changes(git_username, git_token, script_dir, new_videos_count)
 
 
 if __name__ == "__main__":
