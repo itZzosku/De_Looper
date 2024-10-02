@@ -73,7 +73,7 @@ def load_videos_json(videos_json_path='videos.json'):
 
 def check_existing_file(video_title, download_path):
     """
-    Check if a video with the given title has already been processed in the download path.
+    Check if a video with the given title has already been downloaded or processed in the download path.
 
     Args:
         video_title (str): Title of the video.
@@ -86,12 +86,22 @@ def check_existing_file(video_title, download_path):
     sanitized_video_title = sanitize_filename(video_title)
 
     for file in os.listdir(download_path):
-        if file.endswith(PROCESSED_SUFFIX):
-            # Extract the part of the filename that contains the video title
-            file_title = file.split('_', 2)[-1].rsplit('_', 1)[0]
+        if file.endswith('.mp4'):
+            # Remove the file extension and the '_processed' suffix if present
+            if file.endswith('_processed.mp4'):
+                base_filename = file[:-len('_processed.mp4')]
+            else:
+                base_filename = file[:-len('.mp4')]
 
-            if file_title == sanitized_video_title:
-                return os.path.join(download_path, file)  # Return the full path if a match is found
+            # Extract the video title part
+            parts = base_filename.split('_', 2)
+            if len(parts) >= 3:
+                file_title = parts[2]  # This includes the rest of the filename (video title)
+                # Sanitize the file title to ensure consistent comparison
+                sanitized_file_title = sanitize_filename(file_title)
+
+                if sanitized_file_title == sanitized_video_title:
+                    return os.path.join(download_path, file)  # Return the full path if a match is found
     return None
 
 
