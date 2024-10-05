@@ -68,7 +68,7 @@ def build_video_lookup(videos_list):
         if original_video_name is None or published_at is None or video_number is None:
             continue
 
-        sanitized_name = sanitize_filename(original_video_name)
+        sanitized_name = sanitize_filename(original_video_name).lower()
         published_date = published_at.split('T')[0]  # 'YYYY-MM-DD'
 
         key = (sanitized_name, published_date)
@@ -93,6 +93,14 @@ def build_video_lookup(videos_list):
 
 def find_video_number(video_lookup, sanitized_video_name, video_date):
     return video_lookup.get((sanitized_video_name, video_date), None)
+
+
+def build_video_number_to_id_lookup(videos_list):
+    return {
+        str(video['videoNumber']): video['id']
+        for video in videos_list
+        if 'videoNumber' in video and 'id' in video
+    }
 
 
 def commit_and_push_changes(git_username, git_token, script_dir, new_videos_count):
@@ -230,8 +238,12 @@ def main():
         print("Failed to load videos.json. Exiting.")
         return
 
-    # Build the lookup dictionary
+    # Build the lookup dictionaries
     video_lookup = build_video_lookup(videos_list)
+    video_number_to_id = build_video_number_to_id_lookup(videos_list)
+
+    # Debugging: Print the first few entries to verify
+    # print(f"First 5 entries in video_number_to_id: {list(video_number_to_id.items())[:5]}")
 
     # Initialize variables
     playlist = {
@@ -270,7 +282,7 @@ def main():
             if video_date is None:
                 print(f"Could not extract date from filename '{video_file}'. Skipping.")
                 continue
-            sanitized_video_name = sanitize_filename(video_name)
+            sanitized_video_name = sanitize_filename(video_name).lower()
 
             # Find the videoNumber using the lookup dictionary
             video_number = find_video_number(video_lookup, sanitized_video_name, video_date)
@@ -278,12 +290,24 @@ def main():
                 print(f"No matching videoNumber found for '{video_name}' on date {video_date}. Skipping.")
                 continue
 
+            # Convert video_number to string for consistent dictionary key usage
+            video_number_str = str(video_number)
+
+            # Get videoId from video_number_to_id mapping
+            video_id = video_number_to_id.get(video_number_str)
+            if video_id:
+                youtube_link = f"https://www.youtube.com/watch?v={video_id}"
+            else:
+                youtube_link = None
+                print(f"No videoId found for videoNumber {video_number_str}")
+
             entry = {
                 "videoNumber": video_number,
                 "name": video_name,
                 "file_path": file_path,
                 "duration": duration,
                 "release_date": video_date,
+                "youtube_link": youtube_link,
                 # You can include other fields if needed
             }
             playlist["playlist"].append(entry)
