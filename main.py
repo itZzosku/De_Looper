@@ -277,6 +277,7 @@ def pipe_to_stream(media_file, is_preprocessed):
         ffmpeg_command = [
             "ffmpeg",
             "-loglevel", "error",
+            "-re",  # Ensure real-time streaming
             "-i", media_file,
             "-s", "1280x720",  # Set resolution
             "-c:v", "libx264",
@@ -296,40 +297,63 @@ def pipe_to_stream(media_file, is_preprocessed):
     try:
         while True:
             data = normalize_proc.stdout.read(65536)
-            if not data or skip_event.is_set():
-                if skip_event.is_set():
-                    print("Skip event detected. Terminating current clip.")
-                    skip_event.clear()  # Reset the skip event
-                    # Play the transition after skipping
-                    play_transition()
-                break
-
-            # Write the data to stream_proc stdin (continuous streaming)
-            if stream_proc and stream_proc.stdin and stream_proc.poll() is None:
-                try:
-                    stream_proc.stdin.write(data)
-                except (BrokenPipeError, ValueError) as e:
-                    print(f"Error writing to stream_proc.stdin: {e}")
+            if data:
+                # Write the data to stream_proc stdin
+                if stream_proc and stream_proc.stdin and stream_proc.poll() is None:
+                    try:
+                        stream_proc.stdin.write(data)
+                    except (BrokenPipeError, ValueError) as e:
+                        print(f"Error writing to stream_proc.stdin: {e}")
+                        break
+                else:
+                    print("Stream process was closed during media playback.")
                     break
             else:
-                print("Stream process was closed during media playback.")
-                break
+                # No data was read
+                if normalize_proc.poll() is not None:
+                    # normalize_proc has finished
+                    print("normalize_proc has finished processing the clip.")
 
+                    # Read any remaining data from normalize_proc.stdout
+                    remaining_data = normalize_proc.stdout.read()
+                    while remaining_data:
+                        if stream_proc and stream_proc.stdin and stream_proc.poll() is None:
+                            try:
+                                stream_proc.stdin.write(remaining_data)
+                            except (BrokenPipeError, ValueError) as e:
+                                print(f"Error writing remaining data to stream_proc.stdin: {e}")
+                                break
+                        remaining_data = normalize_proc.stdout.read()
+
+                    break
+                elif skip_event.is_set():
+                    print("Skip event detected. Terminating current clip.")
+                    skip_event.clear()  # Reset the skip event
+                    # Terminate normalize_proc due to skip event
+                    if normalize_proc and normalize_proc.poll() is None:
+                        print("Terminating normalize_proc due to skip event...")
+                        normalize_proc.terminate()
+                        try:
+                            normalize_proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            print("normalize_proc did not terminate in time. Killing it.")
+                            normalize_proc.kill()
+                            normalize_proc.wait()
+                    # Play the transition after skipping
+                    play_transition()
+                    return  # Exit the function
+                else:
+                    # No data available yet, wait a bit
+                    time.sleep(0.1)
     except Exception as e:
         print(f"An error occurred in pipe_to_stream: {e}")
         import traceback
         traceback.print_exc()
-
     finally:
+        # Wait for normalize_proc to finish naturally
         if normalize_proc and normalize_proc.poll() is None:
-            print("Terminating normalize_proc...")
-            normalize_proc.terminate()
-            try:
-                normalize_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                print("normalize_proc did not terminate in time. Killing it.")
-                normalize_proc.kill()
-                normalize_proc.wait()
+            print("Waiting for normalize_proc to finish...")
+            normalize_proc.wait()
 
         # Flush but don't close stream_proc to keep it running
         if stream_proc and stream_proc.stdin:
@@ -337,6 +361,9 @@ def pipe_to_stream(media_file, is_preprocessed):
                 stream_proc.stdin.flush()  # Ensure any remaining data is flushed
             except (BrokenPipeError, ValueError):
                 print("Broken pipe when flushing stream after media playback.")
+
+    # Play the transition after the clip has fully played
+    play_transition()
 
 
 # Function to stream media files and recheck playlist between clips
@@ -391,7 +418,15 @@ def stream_and_recheck_playlist(last_played_videoNumber=None):
                 played_ids.add(media_id)  # Mark this video as played
 
                 print(f"Starting playback of mediaNumber {media_id}: {media_title}")
-                message = f"Nyt toistetaan: {media_title} (Julkaisupäivä: {media_release_date})"
+                youtube_link = media.get('youtube_link', '')
+                if youtube_link:
+                    message = (
+                        f"Nyt toistetaan: {media_title} "
+                        f"(Julkaisupäivä: {media_release_date}) "
+                        f"{youtube_link}"
+                    )
+                else:
+                    message = f"Nyt toistetaan: {media_title} (Julkaisupäivä: {media_release_date})"
                 send_message_to_chat(message)
 
                 if "_processed.mp4" in media_file and os.path.exists(media_file):
@@ -425,9 +460,6 @@ def stream_and_recheck_playlist(last_played_videoNumber=None):
                     stream_proc = subprocess.Popen(stream_command, stdin=subprocess.PIPE)
                     stream_start_time = time.time()
                     print(f"Started new stream_proc with PID: {stream_proc.pid}")
-
-                # Play the transition after the clip
-                play_transition()
 
                 print(f"Finished processing mediaNumber {media_id}. Moving to the next clip.")
                 idx += 1
