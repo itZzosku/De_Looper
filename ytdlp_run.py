@@ -1,6 +1,8 @@
 import os
 import subprocess
 import argparse
+import signal
+import threading
 import ytdlp_prerun  # Import the module that checks and updates videos.json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from common_functions import sanitize_filename
@@ -9,8 +11,24 @@ from common_functions import load_videos_json  # Using the updated load_videos_j
 from common_functions import check_existing_file
 from common_functions import filter_videos_by_date
 
+# Global event for shutdown
+shutdown_event = threading.Event()
+
+
+def signal_handler(signum, frame):
+    print("\nSignal received, initiating graceful shutdown...")
+    shutdown_event.set()
+
+
+# Register the signal handlers
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 
 def download_video(video, download_path, archive_path):
+    if shutdown_event.is_set():
+        return f"Skipped (shutdown): {video['name']}"
+
     video_id = video['id']
     video_title = sanitize_filename(video['name'])  # Sanitize the video title to avoid file naming issues
     published_at = video['publishedAt']
@@ -39,6 +57,13 @@ def download_video(video, download_path, archive_path):
     except subprocess.CalledProcessError as e:
         print(f"Error downloading video {video_title}: {e}")
         return f"Failed: {video_title}"
+    except Exception as e:
+        if shutdown_event.is_set():
+            print(f"Shutdown in progress. Skipping download of {video_title}.")
+            return f"Skipped (shutdown): {video_title}"
+        else:
+            print(f"Unexpected error downloading video {video_title}: {e}")
+            return f"Failed: {video_title}"
 
 
 def download_videos(videos, download_path, max_workers=20):
@@ -56,20 +81,33 @@ def download_videos(videos, download_path, max_workers=20):
             executor.submit(download_video, video, download_path, archive_path): video for video in videos
         }
 
-        for future in as_completed(future_to_video):
-            video = future_to_video[future]
-            try:
-                result = future.result()
-                if result.startswith("Downloaded"):
-                    processed_videos += 1
-                elif result.startswith("Skipped"):
+        try:
+            for future in as_completed(future_to_video):
+                if shutdown_event.is_set():
+                    print("Shutdown event detected. Cancelling pending tasks...")
+                    break
+                video = future_to_video[future]
+                try:
+                    result = future.result()
+                    if result.startswith("Downloaded"):
+                        processed_videos += 1
+                    elif result.startswith("Skipped"):
+                        skipped_videos += 1
+                except Exception as e:
+                    print(f"Exception occurred for video {video['name']}: {e}")
                     skipped_videos += 1
-            except Exception as e:
-                print(f"Exception occurred for video {video['name']}: {e}")
-                skipped_videos += 1
+
+        except KeyboardInterrupt:
+            print("\nKeyboardInterrupt received, shutting down...")
+            shutdown_event.set()
+            # Cancel pending futures
+            for future in future_to_video:
+                future.cancel()
+        finally:
+            executor.shutdown(wait=False)
 
     # Final summary
-    print(f"Download complete. {processed_videos} videos downloaded, {skipped_videos} videos skipped.")
+    print(f"\nDownload complete. {processed_videos} videos downloaded, {skipped_videos} videos skipped.")
 
 
 def main():
@@ -82,7 +120,7 @@ def main():
     parser.add_argument('--start_date', default=None, type=str, help="Start date (YYYY-MM-DD)")
     parser.add_argument('--end_date', default=None, type=str, help="End date (YYYY-MM-DD)")
     parser.add_argument('--folder', default=None, type=str, help="Download path")
-    parser.add_argument('--max_workers', default=10, type=int, help="Maximum number of parallel downloads")
+    parser.add_argument('--max_workers', default=6, type=int, help="Maximum number of parallel downloads")
 
     # Parse the arguments from the command line
     args = parser.parse_args()
@@ -115,8 +153,14 @@ def main():
     else:
         print(f"{video_count} videos will be downloaded from {args.start_date} to {args.end_date}.")
 
-    # Download the videos in parallel
-    download_videos(filtered_videos, args.folder, args.max_workers)
+    try:
+        # Download the videos in parallel
+        download_videos(filtered_videos, args.folder, args.max_workers)
+    except KeyboardInterrupt:
+        print("\nKeyboardInterrupt received in main, exiting...")
+    finally:
+        if shutdown_event.is_set():
+            print("Graceful shutdown complete.")
 
     # Print a success message
     print(f"Downloaded videos from {args.start_date} to {args.end_date} to {args.folder}.")
