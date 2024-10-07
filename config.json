@@ -1,0 +1,10 @@
+{
+    "Twitch_Stream_Key": "your_twitch_stream_key_here",
+    "Youtube_API_Key": "your_youtube_api_key_here",
+    "Twitch_OAuth_Token": "your_twitch_oauth_token_here",
+    "Twitch_Nick": "your_twitch_nickname_here",
+    "Twitch_Channel": "your_twitch_channel_here",
+    "Instant_Skip_Users": ["user1", "user2", "user3", "user4"],
+    "git_username": "your_git_username_here",
+    "git_token": "your_git_token_here"
+}
