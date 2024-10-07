@@ -8,3 +8,5 @@
     "git_username": "your_git_username_here",
     "git_token": "your_git_token_here"
 }
+
+//RENAME to config.json and remove this line
