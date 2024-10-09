@@ -5,7 +5,7 @@ import torch
 print("GPU Available: ", torch.cuda.is_available())
 
 # Base folder containing all subfolders with videos
-base_folder = r'E:\Niilo22'
+base_folder = r'T:\Niilo22'
 
 # Load the Whisper 'medium' model
 model = whisper.load_model("medium")  # Use the medium model
