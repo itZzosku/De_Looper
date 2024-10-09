@@ -17,6 +17,7 @@ def preprocess_file(input_file, output_file, codec):
     try:
         subprocess.run([
             'ffmpeg',
+            '-y',
             '-loglevel', 'error',
             '-i', input_file,
             '-s', '1280x720',  # Scale to 720p
@@ -28,6 +29,7 @@ def preprocess_file(input_file, output_file, codec):
         ], check=True)
         print(f"Preprocessing complete: {output_file}")
         return True
+
     except subprocess.CalledProcessError as e:
         print(f"Error preprocessing file {input_file}: {e}")
         return False

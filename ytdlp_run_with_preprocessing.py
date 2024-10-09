@@ -22,6 +22,7 @@ def preprocess_file(input_file, output_file, codec):
     try:
         subprocess.run([
             'ffmpeg',
+            '-y',
             '-loglevel', 'error',
             '-i', input_file,
             '-s', '1280x720',  # Scale to 720p
