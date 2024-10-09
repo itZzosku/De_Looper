@@ -1,30 +1,35 @@
 import os
 import subprocess
 import argparse
+import signal
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Event
+
+# Create a global event to handle shutdown
+shutdown_event = Event()
 
 
 def preprocess_file(input_file, output_file, codec):
-    # Check if input file exists before attempting to preprocess
+    if shutdown_event.is_set():
+        return False
+
     if not os.path.exists(input_file):
         print(f"Error: Input file does not exist: {input_file}")
         return False
 
-    # Set encoding parameters based on the codec
     video_codec = 'h264_nvenc' if codec == "h264_nvenc" else 'libx264'
 
-    # Run ffmpeg with the selected codec
     try:
         subprocess.run([
             'ffmpeg',
             '-y',
             '-loglevel', 'error',
             '-i', input_file,
-            '-s', '1280x720',  # Scale to 720p
+            '-s', '1280x720',
             '-c:v', video_codec, '-preset', 'fast', '-b:v', '2300k',
-            '-r', '30',  # Set frame rate to 30fps
-            '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',  # AAC audio
-            '-movflags', '+faststart',  # Fast start for streaming
+            '-r', '30',
+            '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',
+            '-movflags', '+faststart',
             output_file
         ], check=True)
         print(f"Preprocessing complete: {output_file}")
@@ -36,17 +41,17 @@ def preprocess_file(input_file, output_file, codec):
 
 
 def process_video_file(file_path, codec, index, total_videos):
+    if shutdown_event.is_set():
+        return False
+
     directory, filename = os.path.split(file_path)
     input_file = file_path
     output_file = os.path.join(directory, filename.replace('.mp4', '_processed.mp4'))
 
     print(f"Processing {index}/{total_videos}: {input_file}")
-
-    # Preprocess the file using the preprocess_file function
     success = preprocess_file(input_file, output_file, codec)
 
     if success:
-        # Remove the original file after preprocessing
         try:
             os.remove(input_file)
             print(f"Original file deleted, and preprocessed file saved as: {output_file}")
@@ -60,18 +65,18 @@ def process_video_file(file_path, codec, index, total_videos):
 
 
 def preprocess_videos(directories, codec, max_workers=4):
-    # Normalize directory paths
     directories = [os.path.normpath(d) for d in directories]
 
-    # Collect all video files from the specified directories
     video_files = []
     for directory in directories:
         if not os.path.isdir(directory):
             print(f"Error: The directory '{directory}' does not exist.")
             continue
-        # Use os.scandir for better performance
         with os.scandir(directory) as entries:
             for entry in entries:
+                if shutdown_event.is_set():
+                    print("Shutdown signal received. Stopping new tasks.")
+                    break
                 if entry.is_file() and entry.name.endswith('.mp4') and not entry.name.endswith('_processed.mp4'):
                     video_files.append(entry.path)
 
@@ -82,9 +87,7 @@ def preprocess_videos(directories, codec, max_workers=4):
 
     processed_videos = 0
 
-    # Use ThreadPoolExecutor to process videos in parallel
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks to the executor
         future_to_file = {
             executor.submit(process_video_file, file_path, codec, index, total_videos): file_path
             for index, file_path in enumerate(video_files, start=1)
@@ -99,8 +102,16 @@ def preprocess_videos(directories, codec, max_workers=4):
             except Exception as e:
                 print(f"Exception occurred while processing {filename}: {e}")
 
-    # Final summary
+            if shutdown_event.is_set():
+                print("Shutdown in progress. Waiting for remaining tasks to finish...")
+                break
+
     print(f"Preprocessing complete. {processed_videos} out of {total_videos} videos were processed.")
+
+
+def signal_handler(sig, frame):
+    print(f"Received signal {sig}. Initiating graceful shutdown...")
+    shutdown_event.set()
 
 
 def main():
@@ -115,7 +126,10 @@ def main():
 
     args = parser.parse_args()
 
-    # If arguments are not provided, prompt the user for input
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     if args.video_folders is None:
         folders_input = input("Enter the directories containing video files to preprocess (separated by spaces): ")
         args.video_folders = folders_input.strip().split()
@@ -130,13 +144,11 @@ def main():
             print("Invalid choice! Defaulting to libx264.")
             args.codec = 'libx264'
 
-    # Normalize and validate directories
     valid_directories = [os.path.normpath(d) for d in args.video_folders if os.path.isdir(os.path.normpath(d))]
     if not valid_directories:
         print("Error: None of the specified directories exist.")
         return
 
-    # Start preprocessing videos with the specified number of workers
     preprocess_videos(valid_directories, args.codec, args.max_workers)
 
 
