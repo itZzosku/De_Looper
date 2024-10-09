@@ -64,7 +64,7 @@ def process_video_file(file_path, codec, index, total_videos):
         return False
 
 
-def preprocess_videos(directories, codec, max_workers=4):
+def preprocess_videos(directories, codec, max_workers=2):
     directories = [os.path.normpath(d) for d in directories]
 
     video_files = []
@@ -121,7 +121,7 @@ def main():
                         help="List of directories containing video files to preprocess")
     parser.add_argument('--codec', default=None, choices=['h264_nvenc', 'libx264'],
                         help="Video encoder (h264_nvenc for GPU, libx264 for CPU)")
-    parser.add_argument('--max_workers', default=4, type=int,
+    parser.add_argument('--max_workers', default=2, type=int,
                         help="Maximum number of parallel workers")
 
     args = parser.parse_args()
