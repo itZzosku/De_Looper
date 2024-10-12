@@ -13,11 +13,17 @@ from common_functions import filter_videos_by_date
 
 # Global event for shutdown
 shutdown_event = threading.Event()
+processes = []  # List to track running yt-dlp subprocesses
 
 
 def signal_handler(signum, frame):
     print("\nSignal received, initiating graceful shutdown...")
     shutdown_event.set()
+
+    # Terminate all running yt-dlp processes
+    for process in processes:
+        if process.poll() is None:  # If process is still running
+            process.terminate()  # Send termination signal to subprocess
 
 
 # Register the signal handlers
@@ -42,8 +48,11 @@ def download_video(video, download_path, archive_path):
     # Check if the video has already been downloaded by comparing video titles
     existing_file = check_existing_file(video_title, download_path)
     if existing_file:
-        print(f"File already exists: {existing_file}. Skipping download.")
-        return f"Skipped: {video_title}"
+        # Only print one message about the skipped video due to existing file
+        return f"File already exists: {existing_file}. Skipped: {video_title}"
+
+    # Print that the download is starting
+    print(f"Starting download: {video_title}")
 
     # Use yt-dlp to download the video only if it doesn't exist
     yt_dlp_command = [
@@ -51,12 +60,24 @@ def download_video(video, download_path, archive_path):
         '-o', f"{output_template}.%(ext)s", f"https://www.youtube.com/watch?v={video_id}"
     ]
     try:
-        subprocess.run(yt_dlp_command, check=True)
-        print(f"Downloaded: {output_template}")
-        return f"Downloaded: {video_title}"
-    except subprocess.CalledProcessError as e:
-        print(f"Error downloading video {video_title}: {e}")
-        return f"Failed: {video_title}"
+        # Start the yt-dlp process and add it to the list of processes
+        # Suppress standard output, but capture errors
+        process = subprocess.Popen(yt_dlp_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        processes.append(process)
+
+        process.wait()  # Wait for the process to finish
+
+        if process.returncode == 0:
+            return f"Downloaded: {video_title}"
+        else:
+            stderr_output = process.stderr.read()
+            if "Sign in to confirm you’re not a bot" in stderr_output:
+                print(f"Error: {video_title} requires sign-in or verification. Stopping downloads.")
+                shutdown_event.set()  # Trigger shutdown to stop further downloads
+                return f"Failed: {video_title} (Sign-in required)"
+            else:
+                print(f"Error downloading video {video_title}: {stderr_output}")
+                return f"Failed: {video_title}"
     except Exception as e:
         if shutdown_event.is_set():
             print(f"Shutdown in progress. Skipping download of {video_title}.")
@@ -71,7 +92,7 @@ def download_videos(videos, download_path, max_workers=20):
     archive_path = os.path.join(download_path, "archive.txt")
 
     total_videos = len(videos)
-    processed_videos = 0
+    downloaded_videos = 0  # This now includes both downloaded and skipped videos
     skipped_videos = 0  # Track skipped videos
 
     # Use ThreadPoolExecutor to download videos in parallel
@@ -89,17 +110,25 @@ def download_videos(videos, download_path, max_workers=20):
                 video = future_to_video[future]
                 try:
                     result = future.result()
-                    if result.startswith("Downloaded"):
-                        processed_videos += 1
-                    elif result.startswith("Skipped"):
+                    # Whether downloaded or skipped, count it as a processed video
+                    downloaded_videos += 1
+
+                    if "Skipped" in result:
                         skipped_videos += 1
+
+                    # Display the running total of downloaded videos (downloaded + skipped)
+                    print(f"{result} ({downloaded_videos}/{total_videos} downloaded)")
                 except Exception as e:
                     print(f"Exception occurred for video {video['name']}: {e}")
-                    skipped_videos += 1
+                    downloaded_videos += 1
 
         except KeyboardInterrupt:
             print("\nKeyboardInterrupt received, shutting down...")
             shutdown_event.set()
+            # Terminate running processes
+            for process in processes:
+                if process.poll() is None:
+                    process.terminate()
             # Cancel pending futures
             for future in future_to_video:
                 future.cancel()
@@ -107,7 +136,7 @@ def download_videos(videos, download_path, max_workers=20):
             executor.shutdown(wait=False)
 
     # Final summary
-    print(f"\nDownload complete. {processed_videos} videos downloaded, {skipped_videos} videos skipped.")
+    print(f"\nDownload complete. {downloaded_videos} videos downloaded, {skipped_videos} videos skipped.")
 
 
 def main():
