@@ -75,6 +75,7 @@ def compare_videos_with_directory(videos, directory, year):
     total_preprocessed = len(preprocessed_titles)
 
     print(f"Year: {year}")
+    print(f"Directory: {directory}")
     print(f"Total videos expected: {total_expected}")
     print(f"Total videos downloaded: {total_downloaded}")
     print(f"Total videos preprocessed: {total_preprocessed}")
@@ -101,8 +102,8 @@ def main():
 
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Compare videos with directory')
-    parser.add_argument('--folder', required=True, help='Directory containing video files for the specific year')
-    parser.add_argument('--year', required=True, type=int, help='Year to check (e.g., 2014)')
+    parser.add_argument('--folder', required=True, help='Directory containing video files or directories per year')
+    parser.add_argument('--year', type=int, help='Year to check (e.g., 2022). If not provided, all year subdirectories will be checked.')
     args = parser.parse_args()
 
     directory = args.folder
@@ -113,8 +114,24 @@ def main():
         print(f"Error: The directory '{directory}' does not exist.")
         return
 
-    # Compare the videos with the directory
-    compare_videos_with_directory(videos, directory, year)
+    if year:
+        # If year is specified, check only that year in the given directory
+        year_directory = directory
+        if not os.path.isdir(year_directory):
+            print(f"Error: The directory '{year_directory}' does not exist.")
+            return
+        # Compare the videos with the directory
+        compare_videos_with_directory(videos, year_directory, year)
+    else:
+        # If year is not specified, iterate through subdirectories and process each year
+        for subdir in os.listdir(directory):
+            subdir_path = os.path.join(directory, subdir)
+            if os.path.isdir(subdir_path) and subdir.isdigit():
+                year = int(subdir)
+                compare_videos_with_directory(videos, subdir_path, year)
+            else:
+                # Skip non-numeric subdirectories
+                continue
 
 
 if __name__ == "__main__":
