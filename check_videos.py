@@ -144,7 +144,7 @@ def compare_videos_with_directory(videos, directory, year, duration_cache):
                 if sanitized_title in expected_titles:
                     # Check if duration is already in cache
                     if filename in duration_cache:
-                        print(f"Duration already cached for {filename}. Skipping processing this video.")
+                        # print(f"Duration already cached for {filename}. Skipping processing this video.")
                         continue  # Skip processing this video
                     else:
                         # Check if the video is playable
