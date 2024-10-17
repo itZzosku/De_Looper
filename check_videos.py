@@ -1,7 +1,9 @@
 import os
+import json
 import argparse
-from common_functions import sanitize_filename, load_videos_json
 import datetime
+import subprocess
+from common_functions import sanitize_filename, load_videos_json
 
 
 def extract_video_title_from_filename(filename):
@@ -27,6 +29,44 @@ def extract_video_title_from_filename(filename):
     return video_title
 
 
+def is_video_playable(filepath):
+    """
+    Checks if a video file is playable using ffprobe.
+    """
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
+             "stream=codec_type", "-of", "default=noprint_wrappers=1", filepath],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        # If ffprobe outputs stream information, the video is playable
+        return bool(result.stdout.strip())
+    except Exception as e:
+        print(f"Error checking playability for {filepath}: {e}")
+        return False
+
+
+def get_video_duration(filepath):
+    """
+    Gets the duration of a video file using ffprobe.
+    """
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of",
+             "default=noprint_wrappers=1:nokey=1", filepath],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        duration_str = result.stdout.strip()
+        if duration_str:
+            return float(duration_str)
+        else:
+            print(f"ffprobe did not return duration for {filepath}")
+            return None
+    except Exception as e:
+        print(f"Error getting duration for {filepath}: {e}")
+        return None
+
+
 def get_video_titles_in_directory(directory):
     """
     Returns two sets:
@@ -47,10 +87,11 @@ def get_video_titles_in_directory(directory):
     return downloaded_titles, preprocessed_titles
 
 
-def compare_videos_with_directory(videos, directory, year):
+def compare_videos_with_directory(videos, directory, year, duration_cache):
     """
     Compares the videos from videos.json for a specific year with the videos in the directory.
     Reports statistics and any videos that are missing or need preprocessing.
+    Also checks if videos are playable, obtains their durations, and updates the duration_cache.
     """
     expected_titles = set()
     for video in videos:
@@ -74,7 +115,7 @@ def compare_videos_with_directory(videos, directory, year):
     total_downloaded = len(downloaded_titles | preprocessed_titles)
     total_preprocessed = len(preprocessed_titles)
 
-    print(f"Year: {year}")
+    print(f"\nYear: {year}")
     print(f"Directory: {directory}")
     print(f"Total videos expected: {total_expected}")
     print(f"Total videos downloaded: {total_downloaded}")
@@ -92,6 +133,34 @@ def compare_videos_with_directory(videos, directory, year):
         for title in sorted(downloaded_only):
             print(f"- {title}")
 
+    # Now check playability and durations
+    for filename in os.listdir(directory):
+        if filename.endswith('.mp4'):
+            file_path = os.path.join(directory, filename)
+            video_title = extract_video_title_from_filename(filename)
+            if video_title:
+                sanitized_title = sanitize_filename(video_title)
+                # Only process videos that are in expected titles
+                if sanitized_title in expected_titles:
+                    # Check if duration is already in cache
+                    if filename in duration_cache:
+                        print(f"Duration already cached for {filename}. Skipping processing this video.")
+                        continue  # Skip processing this video
+                    else:
+                        # Check if the video is playable
+                        if is_video_playable(file_path):
+                            print(f"Video {filename} is playable.")
+                            duration = get_video_duration(file_path)
+                            if duration is not None:
+                                # Update the cache
+                                duration_cache[filename] = duration
+                                print(f"Duration for {filename}: {duration} seconds")
+                            else:
+                                print(f"Could not obtain duration for {filename}.")
+                        else:
+                            print(f"Video {filename} is not playable.")
+                            # Optionally, mark this in the cache or take other actions
+
     if not missing_titles and not downloaded_only:
         print("\nAll expected videos for the year are downloaded and preprocessed.")
 
@@ -103,7 +172,8 @@ def main():
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Compare videos with directory')
     parser.add_argument('--folder', required=True, help='Directory containing video files or directories per year')
-    parser.add_argument('--year', type=int, help='Year to check (e.g., 2022). If not provided, all year subdirectories will be checked.')
+    parser.add_argument('--year', type=int,
+                        help='Year to check (e.g., 2022). If not provided, all year subdirectories will be checked.')
     args = parser.parse_args()
 
     directory = args.folder
@@ -114,6 +184,21 @@ def main():
         print(f"Error: The directory '{directory}' does not exist.")
         return
 
+    # Load duration cache
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    duration_cache_path = os.path.join(script_dir, "duration_cache.json")
+    duration_cache = {}
+    if os.path.exists(duration_cache_path):
+        try:
+            with open(duration_cache_path, 'r', encoding='utf-8') as cache_file:
+                duration_cache = json.load(cache_file)
+        except json.JSONDecodeError:
+            print(
+                f"Warning: The duration cache file '{duration_cache_path}' is empty or invalid. It will be recreated.")
+            duration_cache = {}
+    else:
+        duration_cache = {}
+
     if year:
         # If year is specified, check only that year in the given directory
         year_directory = directory
@@ -121,17 +206,22 @@ def main():
             print(f"Error: The directory '{year_directory}' does not exist.")
             return
         # Compare the videos with the directory
-        compare_videos_with_directory(videos, year_directory, year)
+        compare_videos_with_directory(videos, year_directory, year, duration_cache)
     else:
         # If year is not specified, iterate through subdirectories and process each year
         for subdir in os.listdir(directory):
             subdir_path = os.path.join(directory, subdir)
             if os.path.isdir(subdir_path) and subdir.isdigit():
                 year = int(subdir)
-                compare_videos_with_directory(videos, subdir_path, year)
+                compare_videos_with_directory(videos, subdir_path, year, duration_cache)
             else:
                 # Skip non-numeric subdirectories
                 continue
+
+    # Save updated duration cache with sorted keys for better readability
+    with open(duration_cache_path, 'w', encoding='utf-8') as cache_file:
+        json.dump(duration_cache, cache_file, indent=4, ensure_ascii=False, sort_keys=True)
+    print(f"\nUpdated duration cache saved to {duration_cache_path}")
 
 
 if __name__ == "__main__":

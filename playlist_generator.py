@@ -6,7 +6,7 @@ import argparse
 import ytdlp_prerun  # Import the ytdlp_prerun module
 from common_functions import sanitize_filename
 from common_functions import load_videos_json
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 
 def get_video_duration(filepath):
@@ -16,10 +16,15 @@ def get_video_duration(filepath):
              "default=noprint_wrappers=1:nokey=1", filepath],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
-        return float(result.stdout.strip())
+        duration_str = result.stdout.strip()
+        if duration_str:
+            return float(duration_str)
+        else:
+            print(f"ffprobe did not return duration for {filepath}")
+            return None
     except Exception as e:
         print(f"Error getting duration for {filepath}: {e}")
-        return 0
+        return None
 
 
 def format_duration(total_seconds):
@@ -242,9 +247,6 @@ def main():
     video_lookup = build_video_lookup(videos_list)
     video_number_to_id = build_video_number_to_id_lookup(videos_list)
 
-    # Debugging: Print the first few entries to verify
-    # print(f"First 5 entries in video_number_to_id: {list(video_number_to_id.items())[:5]}")
-
     # Initialize variables
     playlist = {
         "playlist": []
@@ -270,12 +272,18 @@ def main():
                 duration = duration_cache[video_file]
             else:
                 duration = get_video_duration(file_path)
-                # Update the cache
-                duration_cache[video_file] = duration
-                # Increment new videos count
-                new_videos_count += 1
+                if duration is not None:
+                    # Update the cache
+                    duration_cache[video_file] = duration
+                    # Increment new videos count
+                    new_videos_count += 1
+                else:
+                    print(f"Could not obtain duration for {video_file}, not updating duration cache.")
 
-            total_duration += duration  # Add each clip's duration to total
+            if duration is not None:
+                total_duration += duration  # Add each clip's duration to total
+            else:
+                print(f"Skipping addition to total duration for {video_file} due to missing duration.")
 
             # Extract video name and date from the filename
             video_name, video_date = extract_video_name_and_date(video_file)
