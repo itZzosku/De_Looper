@@ -12,6 +12,9 @@ model = whisper.load_model("medium")  # Use the medium model
 
 # Walk through all subdirectories in the base folder
 for root, dirs, files in os.walk(base_folder):
+    # Exclude 'transcribes' folders from being traversed
+    dirs[:] = [d for d in dirs if d != 'transcribes']
+
     print(f"Processing folder: {root}")
 
     # Path to the 'transcribes' subfolder in the current directory
