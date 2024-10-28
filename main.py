@@ -1,3 +1,4 @@
+import argparse
 import subprocess
 import os
 import json
@@ -16,15 +17,37 @@ stream_start_time = None  # Variable to track when stream_proc was started
 # Maximum stream duration before restarting (e.g., 47 hours)
 max_stream_duration = 47 * 60 * 60  # 47 hours in seconds
 
-# Twitch configuration for streaming and chat
-config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+# Argument parser for config file and starting videoNumber
+parser = argparse.ArgumentParser(description="Stream automation script")
+parser.add_argument(
+    "--config",
+    default="config.json",
+    help="Specify the configuration file to use (default: config.json)"
+)
+parser.add_argument(
+    "--video_number",
+    type=int,
+    help="Starting videoNumber (default: last saved position)"
+)
+args = parser.parse_args()
+
+# Load configuration file
+config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), args.config)
+print(f"Using configuration file: {config_file}")
 with open(config_file, 'r', encoding='utf-8') as f:
     config_data = json.load(f)
     Twitch_Stream_Key = config_data.get("Twitch_Stream_Key")
     Twitch_OAuth_Token = config_data.get("Twitch_OAuth_Token")
     Twitch_Nick = config_data.get("Twitch_Nick")
     Twitch_Channel = config_data.get("Twitch_Channel")
-    Instant_Skip_Users = config_data.get("Instant_Skip_Users", [])  # Load Instant_Skip_Users list
+    Instant_Skip_Users = config_data.get("Instant_Skip_Users", [])
+
+# Determine starting videoNumber
+start_id = args.video_number if args.video_number is not None else None
+if start_id is not None:
+    print(f"Starting from videoNumber: {start_id}")
+else:
+    print("No video_number provided, will use last saved position.")
 
 Twitch_URL = f"rtmp://live.twitch.tv/app/{Twitch_Stream_Key}"
 
@@ -471,25 +494,15 @@ def stream_and_recheck_playlist(last_played_videoNumber=None):
             print(f"An error occurred in stream_and_recheck_playlist: {e}")
             import traceback
             traceback.print_exc()
-            # Decide whether to break or continue based on the exception
             break
 
 
 # Main function to run the whole process
 def main():
-    # Parse command-line arguments for starting videoNumber
-    if len(sys.argv) > 1:
-        try:
-            start_id = int(sys.argv[1])
-            print(f"Starting from videoNumber: {start_id}")
-        except ValueError:
-            print("Invalid videoNumber provided. Starting from the last saved position.")
-            start_id = None
-    else:
-        start_id = None
-
     print(f"Using playlist: {playlist_json}")
-    last_played_videoNumber = start_id if start_id else load_progress()
+
+    # Use `start_id` if provided; otherwise, load from progress.json
+    last_played_videoNumber = start_id if start_id is not None else load_progress()
 
     if last_played_videoNumber:
         print(f"Resuming from videoNumber: {last_played_videoNumber}")
@@ -502,6 +515,7 @@ def main():
     chat_thread.daemon = True  # Ensures the thread will exit when the main program exits
     chat_thread.start()
 
+    # Call function to start streaming based on the last played video
     stream_and_recheck_playlist(last_played_videoNumber=last_played_videoNumber)
 
 
