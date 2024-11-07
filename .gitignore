@@ -163,3 +163,4 @@ cython_debug/
 /config.json
 /playlist.json
 config.json
+videos.json
