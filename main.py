@@ -70,6 +70,7 @@ stream_command = [
     "-g", "60",  # Keyframe interval
     "-flvflags", "no_duration_filesize",
     "-f", "flv",  # Output format for Twitch
+    "-reconnect", "1",  # Enable automatic reconnection
     Twitch_URL
 ]
 
