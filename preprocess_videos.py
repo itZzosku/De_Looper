@@ -9,6 +9,29 @@ from threading import Event
 shutdown_event = Event()
 
 
+def detect_aspect_ratio(input_file):
+    """Detect the aspect ratio of the input video."""
+    try:
+        result = subprocess.run(
+            [
+                'ffprobe',
+                '-v', 'error',
+                '-select_streams', 'v:0',
+                '-show_entries', 'stream=width,height',
+                '-of', 'csv=p=0',
+                input_file
+            ],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        width, height = map(int, result.stdout.strip().split(','))
+        return width, height
+    except Exception as e:
+        print(f"Error detecting aspect ratio for {input_file}: {e}")
+        return None, None
+
+
 def preprocess_file(input_file, output_file, codec):
     if shutdown_event.is_set():
         return False
@@ -19,19 +42,34 @@ def preprocess_file(input_file, output_file, codec):
 
     video_codec = 'h264_nvenc' if codec == "h264_nvenc" else 'libx264'
 
+    width, height = detect_aspect_ratio(input_file)
+    if width is None or height is None:
+        print(f"Skipping {input_file} due to aspect ratio detection failure.")
+        return False
+
+    # Calculate aspect ratio and determine processing logic
+    aspect_ratio = width / height
     try:
+        if aspect_ratio > 16 / 9:  # Wide video
+            vf_filter = 'scale=1280:-2'
+        elif aspect_ratio < 4 / 3:  # Vertical video
+            vf_filter = 'scale=iw*min(1280/iw\\,720/ih):ih*min(1280/iw\\,720/ih),pad=1280:720:(1280-iw)/2:(720-ih)/2'
+        else:  # 4:3 video
+            vf_filter = 'scale=960:720,pad=1280:720:(1280-iw)/2:(720-ih)/2'
+
         subprocess.run([
             'ffmpeg',
             '-y',
             '-loglevel', 'error',
             '-i', input_file,
-            '-s', '1280x720',
+            '-vf', vf_filter,
             '-c:v', video_codec, '-preset', 'fast', '-b:v', '2300k',
             '-r', '30',
             '-c:a', 'aac', '-b:a', '160k', '-ar', '44100',
             '-movflags', '+faststart',
             output_file
         ], check=True)
+
         print(f"Preprocessing complete: {output_file}")
         return True
 
