@@ -149,7 +149,7 @@ def main():
     parser.add_argument('--start_date', default=None, type=str, help="Start date (YYYY-MM-DD)")
     parser.add_argument('--end_date', default=None, type=str, help="End date (YYYY-MM-DD)")
     parser.add_argument('--folder', default=None, type=str, help="Download path")
-    parser.add_argument('--max_workers', default=6, type=int, help="Maximum number of parallel downloads")
+    parser.add_argument('--max_workers', default=1, type=int, help="Maximum number of parallel downloads")
 
     # Parse the arguments from the command line
     args = parser.parse_args()
