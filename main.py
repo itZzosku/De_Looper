@@ -8,6 +8,12 @@ import threading
 import socket  # For connecting to Twitch IRC chat
 import time  # For tracking stream duration
 
+
+def print_ts(message):
+    current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    print(f"[{current_time}] {message}")
+
+
 # Global variables for processes
 stream_proc = None
 normalize_proc = None
@@ -85,7 +91,7 @@ def send_message_to_chat(message):
         s.send(f"JOIN #{Twitch_Channel}\r\n".encode('utf-8'))
         s.send(f"PRIVMSG #{Twitch_Channel} :{message}\r\n".encode('utf-8'))
         s.close()
-        print(f"Sent message to Twitch chat: {message}")
+        print_ts(f"Sent message to Twitch chat: {message}")
     except Exception as e:
         print(f"Error sending message to Twitch chat: {e}")
 
@@ -163,7 +169,7 @@ def save_progress(last_video_number):
         json.dump({"last_played_videoNumber": last_video_number}, f, indent=4, ensure_ascii=False)
         f.flush()
         os.fsync(f.fileno())
-    print(f"Progress saved. Last played videoNumber: {last_video_number}.")
+    print_ts(f"Progress saved. Last played videoNumber: {last_video_number}.")
 
 
 # Function to load the last played videoNumber from progress.json
@@ -286,7 +292,7 @@ def pipe_to_stream(media_file, is_preprocessed):
     global stream_proc, normalize_proc, skip_event
 
     if is_preprocessed:
-        print(f"Streaming preprocessed file: {media_file}")
+        print_ts(f"Streaming preprocessed file: {media_file}")
         ffmpeg_command = [
             "ffmpeg",
             "-loglevel", "error",
@@ -316,7 +322,7 @@ def pipe_to_stream(media_file, is_preprocessed):
 
     # Start FFmpeg to process the media file
     normalize_proc = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    print(f"Started normalize_proc with PID: {normalize_proc.pid}")
+    print_ts(f"Started normalize_proc with PID: {normalize_proc.pid}")
 
     try:
         while True:
@@ -335,8 +341,7 @@ def pipe_to_stream(media_file, is_preprocessed):
             else:
                 # No data was read
                 if normalize_proc.poll() is not None:
-                    # normalize_proc has finished
-                    print("normalize_proc has finished processing the clip.")
+                    print_ts("normalize_proc has finished processing the clip.")
 
                     # Read any remaining data from normalize_proc.stdout
                     remaining_data = normalize_proc.stdout.read()
@@ -440,8 +445,7 @@ def stream_and_recheck_playlist(last_played_videoNumber=None):
                     continue
 
                 played_ids.add(media_id)  # Mark this video as played
-
-                print(f"Starting playback of mediaNumber {media_id}: {media_title}")
+                print_ts(f"Starting playback of mediaNumber {media_id}: {media_title}")
                 youtube_link = media.get('youtube_link', '')
                 if youtube_link:
                     message = (
@@ -458,6 +462,7 @@ def stream_and_recheck_playlist(last_played_videoNumber=None):
                 else:
                     pipe_to_stream(media_file, is_preprocessed=False)
 
+                print_ts(f"Finished processing mediaNumber {media_id}. Moving to the next clip.")
                 save_progress(media_id)
 
                 # Check if we need to restart the stream_proc to avoid Twitch's 48h limit
@@ -485,7 +490,6 @@ def stream_and_recheck_playlist(last_played_videoNumber=None):
                     stream_start_time = time.time()
                     print(f"Started new stream_proc with PID: {stream_proc.pid}")
 
-                print(f"Finished processing mediaNumber {media_id}. Moving to the next clip.")
                 idx += 1
 
             print("Reached the end of the playlist. Rechecking for new clips...")
